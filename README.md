@@ -89,7 +89,7 @@ A Function-Call Access Key is not a universal spending-limit mechanism: it is re
 
 ## Security notes before production
 
-- API Key authentication protects the `/v1` API endpoints. Add role-based authorization and finer-grained permissions for approval and blocklist actions.
+- Separate Agent and Human Reviewer API Keys protect the API. The Agent key protects general `/v1` endpoints; the Reviewer key is required for approval endpoints. These are shared bearer secrets, not individual user identities or full role-based access control.
 - Add rate limiting, request signing and immutable/remote audit logs.
 - NEAR FunctionCall execution has a SQLite replay guard. It is currently single-instance protection; distributed idempotency and transaction reconciliation are still needed for production.
 - Moderate blocklist reports and preserve provenance.
@@ -224,7 +224,7 @@ no separate frontend build step is required.
 
 Dashboard counters summarize the latest 100 assessments returned by the history
 endpoint. WARN items leave the pending-review queue after a reviewer records a
-decision. The dashboard uses API Key authentication for protected `/v1` API calls.
+decision. The dashboard uses a separate Agent API Key for general protected `/v1` API calls and a Human Reviewer API Key for approval actions. Keys are held in browser memory only and must be entered again after a reload.
 It remains a prototype and is not production-hardened. Do not expose it publicly
 or use it to manage real funds without HTTPS, rate limiting, hardened key custody,
 appropriate authorization controls, and an independent security review.
@@ -254,6 +254,6 @@ The NEAR FunctionCall signer adapter and API execution path are implemented in t
 
 However, the `py-near` SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting have not been verified and are not currently available in this environment.
 
-The 25 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
+The 27 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
 
 Do not configure real funds or use this prototype on Mainnet. Live Testnet integration remains a future validation step.

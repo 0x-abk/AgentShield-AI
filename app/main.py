@@ -24,8 +24,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AgentShield AI", version="0.2.0", description="Deterministic security gate for AI-agent transactions", lifespan=lifespan)
 @app.middleware("http")
 async def require_api_key(request, call_next):
-    if request.url.path.startswith("/v1/"):
-        expected = os.getenv("AGENTSHIELD_API_KEY", "").strip()
+    path = request.url.path
+
+    if path.startswith("/v1/"):
+        if path.startswith("/v1/approvals/"):
+            env_name = "AGENTSHIELD_REVIEWER_API_KEY"
+            error_message = "Invalid or missing reviewer API key"
+        else:
+            env_name = "AGENTSHIELD_API_KEY"
+            error_message = "Invalid or missing API key"
+
+        expected = os.getenv(env_name, "").strip()
 
         if not expected:
             return JSONResponse(
@@ -43,7 +52,7 @@ async def require_api_key(request, call_next):
         ):
             return JSONResponse(
                 status_code=401,
-                content={"detail": "Invalid or missing API key"}
+                content={"detail": error_message}
             )
 
     return await call_next(request)

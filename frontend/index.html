@@ -9,7 +9,9 @@
 <h2>API Authentication</h2>
 <p class="hint">Enter your private AgentShield API Key to connect the dashboard. The key stays in memory only.</p>
 <label>AgentShield API Key</label>
-<input id="apiKeyInput" type="password" placeholder="Enter your API Key" autocomplete="off">
+<input id="apiKeyInput" type="password" placeholder="Enter your Agent API Key" autocomplete="off">
+<label>Human Reviewer API Key</label>
+<input id="reviewerApiKeyInput" type="password" placeholder="Enter your Reviewer API Key" autocomplete="off">
 <button class="primary" id="connectApi" type="button">Connect to AgentShield</button>
 </section>
 <section class="cards"><div class="card"><span>Total assessments</span><div class="metric" id="total">—</div></div><div class="card"><span>Allowed</span><div class="metric" style="color:var(--green)" id="allowed">—</div></div><div class="card"><span>Needs review</span><div class="metric" style="color:var(--yellow)" id="warned">—</div></div><div class="card"><span>Blocked</span><div class="metric" style="color:var(--red)" id="blocked">—</div></div></section>
@@ -30,7 +32,21 @@ async function api(path,opts={}){
   return d
 }function pill(v){return `<span class="pill ${v}">${v}</span>`}function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function refresh(){try{const h=await api('/v1/history?limit=100');$('#apiStatus').textContent='● API connected';$('#total').textContent=h.length;$('#allowed').textContent=h.filter(x=>x.decision==='ALLOW').length;$('#warned').textContent=h.filter(x=>x.decision==='WARN').length;$('#blocked').textContent=h.filter(x=>x.decision==='BLOCK').length;$('#history').innerHTML=h.length?h.map(x=>`<tr><td>${pill(x.decision)}</td><td>${esc(x.receiver)}</td><td>${esc(x.agent_id)}</td><td>${esc(x.risk_level)} · ${x.risk_score}</td><td>${esc(x.created_at)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">No assessments yet.</td></tr>';const q=h.filter(x=>x.decision==='WARN'&&x.approval_status==null&&x.agent_id!=='test-agent');$('#approvalQueue').innerHTML=q.length?q.map(x=>`<div style="border-bottom:1px solid var(--line);padding:10px 0"><b>${esc(x.receiver)}</b><div class="sub">${esc(x.agent_id)} · ${esc(x.transaction_id)}</div><div class="actions"><button class="secondary" onclick="review('${x.transaction_id}',true)">Approve</button><button class="danger" onclick="review('${x.transaction_id}',false)">Reject</button></div></div>`).join(''):'<div class="empty">No pending reviews.</div>'}catch(e){$('#apiStatus').textContent='● API unavailable';$('#apiStatus').style.color='var(--red)'}}
-async function review(id,approved){const reviewer=prompt('Reviewer name:');if(!reviewer)return;try{await api(`/v1/approvals/${id}`,{method:'POST',body:JSON.stringify({approved,reviewer,note:'Reviewed from dashboard'})});toast(approved?'Approval recorded.':'Transaction rejected.');refresh()}catch(e){toast(e.message)}}
+async function review(id,approved){
+  const reviewerKey=$('#reviewerApiKeyInput').value.trim();
+  if(!reviewerKey){toast('Enter your Reviewer API Key first.');return}
+  const reviewer=prompt('Reviewer name:');
+  if(!reviewer)return;
+  try{
+    await api(`/v1/approvals/${id}`,{
+      method:'POST',
+      body:JSON.stringify({approved,reviewer,note:'Reviewed from dashboard'}),
+      headers:{'Authorization':`Bearer ${reviewerKey}`}
+    });
+    toast(approved?'Approval recorded.':'Transaction rejected.');
+    refresh()
+  }catch(e){toast(e.message)}
+}
 $('#assessForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);let args;try{args=JSON.parse(f.get('function_args')||'{}')}catch{toast('Function arguments must be valid JSON.');return}const body={agent_id:f.get('agent_id'),receiver:f.get('receiver'),amount:f.get('amount'),asset:f.get('asset'),action:f.get('action'),function_method:f.get('function_method')||null,function_args:args};try{const d=await api('/v1/assess',{method:'POST',body:JSON.stringify(body)});const box=$('#assessment');box.className='result show';box.innerHTML=`<div class="decision ${d.decision}">${d.decision} · ${d.risk_level} RISK</div><div>Risk score: <b>${d.risk_score}/100</b></div><div class="reason">${d.reasons.map(esc).join('<br>')}</div><div class="mono">ID: ${esc(d.transaction_id)}</div>${d.requires_human_approval?'<p style="color:var(--yellow)">Human approval is required before signing.</p>':''}`;toast('Assessment completed: '+d.decision);refresh()}catch(err){toast(err.message)}});
 $('#blockForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{await api('/v1/blocklist',{method:'POST',body:JSON.stringify(Object.fromEntries(f))});toast('Blocklist report submitted.');e.target.reset();refresh()}catch(err){toast(err.message)}});
 $('#checkAccount').onclick=async()=>{const id=$('#nearAccount').value.trim();if(!id)return toast('Enter a NEAR account ID.');try{const d=await api(`/v1/near/account/${encodeURIComponent(id)}`);$('#nearResult').className='result show';$('#nearResult').textContent=`${d.account_id}: ${d.exists?'Account exists':'Account not found'} · ${d.network}`}catch(e){toast(e.message)}};

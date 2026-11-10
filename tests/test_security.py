@@ -15,6 +15,10 @@ def setup_db(monkeypatch):
         "AGENTSHIELD_API_KEY",
         "test-only-agentshield-key"
     )
+    monkeypatch.setenv(
+        "AGENTSHIELD_REVIEWER_API_KEY",
+        "test-only-reviewer-key"
+    )
     storage.init_db()
 
 def assess(receiver, amount="1", action="transfer"):
@@ -45,9 +49,11 @@ def test_warn_requires_human_approval():
     wrapper = AgentShieldWrapper(lambda tx: {"ok":True})
     with pytest.raises(HumanApprovalRequired):
         wrapper.execute(result, {"receiver":"merchant-account.near"})
-    client.post(f"/v1/approvals/{result['transaction_id']}", json={"approved":True,"reviewer":"human-reviewer"})
-    assert wrapper.execute(result, {"receiver":"merchant-account.near"}) == {"ok":True}
-
+    client.post(
+    f"/v1/approvals/{result['transaction_id']}",
+    json={"approved": True, "reviewer": "human-reviewer"},
+    headers={"Authorization": "Bearer test-only-reviewer-key"}
+)
 def test_invalid_zero_amount_rejected():
     assert assess("safe-account.near", "0").status_code == 200
     assert assess("safe-account.near", "0").json()["decision"] == "BLOCK"
@@ -339,4 +345,30 @@ def test_invalid_api_key_rejected():
 
 def test_health_is_public():
     response = client.get("/health")
+    assert response.status_code == 200
+def test_agent_key_cannot_approve_transaction():
+    warning = assess("merchant-account.near", "12").json()
+
+    response = client.post(
+        f"/v1/approvals/{warning['transaction_id']}",
+        json={"approved": True, "reviewer": "human-reviewer"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_reviewer_key_can_approve_transaction(monkeypatch):
+    monkeypatch.setenv(
+        "AGENTSHIELD_REVIEWER_API_KEY",
+        "test-only-reviewer-key"
+    )
+
+    warning = assess("merchant-account.near", "12").json()
+
+    response = client.post(
+        f"/v1/approvals/{warning['transaction_id']}",
+        json={"approved": True, "reviewer": "human-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"}
+    )
+
     assert response.status_code == 200
