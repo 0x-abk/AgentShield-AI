@@ -406,3 +406,48 @@ def test_transaction_cannot_be_reviewed_twice():
     saved = storage.get_approval(warning["transaction_id"])
     assert saved["approved"] == 1
     assert saved["reviewer"] == "reviewer-one"
+
+
+def test_approval_creates_audit_log():
+    warning = assess("merchant-account.near", "12").json()
+
+    response = client.post(
+        f"/v1/approvals/{warning['transaction_id']}",
+        json={
+            "approved": True,
+            "reviewer": "audit-reviewer",
+            "note": "Security review completed",
+        },
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+
+    assert response.status_code == 200
+
+    logs = storage.get_audit_logs(warning["transaction_id"])
+
+    assert len(logs) == 1
+    assert logs[0]["event_type"] == "TRANSACTION_REVIEWED"
+    assert logs[0]["actor"] == "audit-reviewer"
+
+
+def test_audit_log_cannot_be_updated_or_deleted():
+    warning = assess("merchant-account.near", "12").json()
+
+    client.post(
+        f"/v1/approvals/{warning['transaction_id']}",
+        json={"approved": True, "reviewer": "audit-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+
+    with storage.connect() as db:
+        with pytest.raises(Exception):
+            db.execute(
+                "UPDATE audit_logs SET actor='changed' WHERE transaction_id=?",
+                (warning["transaction_id"],),
+            )
+
+        with pytest.raises(Exception):
+            db.execute(
+                "DELETE FROM audit_logs WHERE transaction_id=?",
+                (warning["transaction_id"],),
+            )

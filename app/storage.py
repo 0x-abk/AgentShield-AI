@@ -33,6 +33,29 @@ def init_db():
           error TEXT,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          transaction_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          details TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_transaction
+        ON audit_logs(transaction_id);
+
+        CREATE TRIGGER IF NOT EXISTS audit_logs_no_update
+        BEFORE UPDATE ON audit_logs
+        BEGIN
+          SELECT RAISE(ABORT, 'Audit logs cannot be updated');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS audit_logs_no_delete
+        BEFORE DELETE ON audit_logs
+        BEGIN
+          SELECT RAISE(ABORT, 'Audit logs cannot be deleted');
+        END;
         """)
 
 def add_decision(payload: dict[str, Any], decision: str, risk_level: str, score: int,
@@ -67,7 +90,19 @@ def save_approval(txid: str, approved: bool, reviewer: str, note: str | None) ->
             """,
             (txid, int(approved), reviewer, note),
         )
-        return cursor.rowcount == 1
+
+        if cursor.rowcount != 1:
+            return False
+
+        add_audit_log(
+            txid,
+            "TRANSACTION_REVIEWED",
+            reviewer,
+            {"approved": approved, "note": note},
+            db=db,
+        )
+
+        return True
 
 def get_approval(txid: str):
     with connect() as db:
@@ -113,3 +148,44 @@ def get_execution(txid: str):
     with connect() as db:
         row = db.execute("SELECT * FROM executions WHERE transaction_id=?", (txid,)).fetchone()
         return dict(row) if row else None
+
+
+def add_audit_log(
+    txid: str,
+    event_type: str,
+    actor: str,
+    details: dict[str, Any] | None = None,
+    db=None,
+):
+    if db is not None:
+        db.execute(
+            """
+            INSERT INTO audit_logs(transaction_id, event_type, actor, details)
+            VALUES (?, ?, ?, ?)
+            """,
+            (txid, event_type, actor, json.dumps(details or {})),
+        )
+        return
+
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO audit_logs(transaction_id, event_type, actor, details)
+            VALUES (?, ?, ?, ?)
+            """,
+            (txid, event_type, actor, json.dumps(details or {})),
+        )
+
+
+def get_audit_logs(txid: str):
+    with connect() as db:
+        rows = db.execute(
+            """
+            SELECT * FROM audit_logs
+            WHERE transaction_id = ?
+            ORDER BY id ASC
+            """,
+            (txid,),
+        ).fetchall()
+
+        return [dict(row) for row in rows]
