@@ -241,3 +241,13 @@ pytest -q
 ```
 
 The replay tests use mocked RPC/signer responses. They validate duplicate-submission prevention at the API layer; they are not evidence of a live Testnet broadcast. The SQLite guard is suitable for a single-instance prototype. A multi-instance deployment needs a shared transactional database and a carefully designed idempotency/reconciliation strategy.
+
+## Current NEAR Signer Status
+
+The NEAR FunctionCall signer adapter and API execution path are implemented in the codebase, with fail-closed policy checks and mocked security tests.
+
+However, the `py-near` SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting have not been verified and are not currently available in this environment.
+
+The 22 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
+
+Do not configure real funds or use this prototype on Mainnet. Live Testnet integration remains a future validation step.
