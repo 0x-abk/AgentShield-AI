@@ -30,7 +30,10 @@ async def require_api_key(request, call_next):
     path = request.url.path
 
     if path.startswith("/v1/"):
-        if path.startswith("/v1/approvals/"):
+        if (
+            path.startswith("/v1/approvals/")
+            or path.startswith("/v1/audit-logs/")
+        ):
             env_name = "AGENTSHIELD_REVIEWER_API_KEY"
             error_message = "Invalid or missing reviewer API key"
         else:
@@ -111,6 +114,15 @@ def review(transaction_id: str, request: ApprovalRequest):
         "approved": request.approved,
         "reviewer": request.reviewer,
     }
+
+@app.get("/v1/audit-logs/{transaction_id}")
+def get_transaction_audit_logs(transaction_id: str):
+    logs = storage.get_audit_logs(transaction_id)
+    return {
+        "transaction_id": transaction_id,
+        "audit_logs": logs,
+    }
+
 
 @app.get("/v1/blocklist")
 def get_blocklist_entries():

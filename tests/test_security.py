@@ -451,3 +451,38 @@ def test_audit_log_cannot_be_updated_or_deleted():
                 "DELETE FROM audit_logs WHERE transaction_id=?",
                 (warning["transaction_id"],),
             )
+
+
+def test_reviewer_key_can_access_audit_logs():
+    warning = assess("merchant-account.near", "12").json()
+
+    review = client.post(
+        f"/v1/approvals/{warning['transaction_id']}",
+        json={"approved": True, "reviewer": "audit-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+    assert review.status_code == 200
+
+    response = client.get(
+        f"/v1/audit-logs/{warning['transaction_id']}",
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["transaction_id"] == warning["transaction_id"]
+    assert len(response.json()["audit_logs"]) == 1
+
+
+def test_agent_key_cannot_access_audit_logs():
+    response = client.get(
+        "/v1/audit-logs/test-transaction",
+        headers={"Authorization": "Bearer test-only-agentshield-key"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_missing_reviewer_key_cannot_access_audit_logs():
+    response = client.get("/v1/audit-logs/test-transaction")
+
+    assert response.status_code == 401
