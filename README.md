@@ -89,8 +89,9 @@ A Function-Call Access Key is not a universal spending-limit mechanism: it is re
 
 ## Security notes before production
 
-- Add authentication and authorization to approval and blocklist endpoints.
-- Add rate limiting, request signing, replay protection and immutable/remote audit logs.
+- API Key authentication protects the `/v1` API endpoints. Add role-based authorization and finer-grained permissions for approval and blocklist actions.
+- Add rate limiting, request signing and immutable/remote audit logs.
+- NEAR FunctionCall execution has a SQLite replay guard. It is currently single-instance protection; distributed idempotency and transaction reconciliation are still needed for production.
 - Moderate blocklist reports and preserve provenance.
 - Add explicit policy versioning and idempotency keys.
 - Add chain-derived account age/activity and contract-code-change evidence.
@@ -155,11 +156,15 @@ This build adds `POST /v1/near/execute-function-call`. It is deliberately narrow
 
 ### Install signer SDK
 
-The NEAR SDK used by the adapter is `py-near==1.2.22` (package import is `py_near`). Install all requirements:
+The signer adapter targets `py-near==1.2.22` (package import: `py_near`).
+This SDK is not included in the current `requirements.txt` and could not be
+installed in the current Android Termux environment because of build
+compatibility issues.
 
-```bash
-pip install -r requirements.txt
-```
+Live signing has therefore not been verified in this environment. SDK
+installation and signer integration must first be validated in a compatible
+Linux environment before attempting Testnet transactions. Installing the
+project requirements alone does not enable live signing.
 
 ### Configure Testnet signer
 
@@ -219,9 +224,10 @@ no separate frontend build step is required.
 
 Dashboard counters summarize the latest 100 assessments returned by the history
 endpoint. WARN items leave the pending-review queue after a reviewer records a
-decision. The dashboard is a prototype and is not production-authenticated; do
-not expose it publicly or use it to manage real funds without authentication,
-CSRF protections, hardened key custody, and an independent security review.
+decision. The dashboard uses API Key authentication for protected `/v1` API calls.
+It remains a prototype and is not production-hardened. Do not expose it publicly
+or use it to manage real funds without HTTPS, rate limiting, hardened key custody,
+appropriate authorization controls, and an independent security review.
 
 
 ## Security test stage (v0.3)
@@ -248,6 +254,6 @@ The NEAR FunctionCall signer adapter and API execution path are implemented in t
 
 However, the `py-near` SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting have not been verified and are not currently available in this environment.
 
-The 22 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
+The 25 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
 
 Do not configure real funds or use this prototype on Mainnet. Live Testnet integration remains a future validation step.
