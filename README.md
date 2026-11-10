@@ -37,24 +37,27 @@ Open `http://127.0.0.1:8000/docs` for the interactive API.
 Safe receiver:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/assess \\
-  -H 'Content-Type: application/json' \\
+curl -X POST http://127.0.0.1:8000/v1/assess \
+  -H "Authorization: Bearer $AGENTSHIELD_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{"agent_id":"agent-001","receiver":"safe-account.near","amount":"2","asset":"NEAR","action":"transfer"}'
 ```
 
 Known demo blocklist receiver:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/assess \\
-  -H 'Content-Type: application/json' \\
+curl -X POST http://127.0.0.1:8000/v1/assess \
+  -H "Authorization: Bearer $AGENTSHIELD_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{"agent_id":"agent-001","receiver":"known-scam.near","amount":"2","asset":"NEAR","action":"transfer"}'
 ```
 
 A high amount (12 NEAR or more) produces `WARN` under the default demo policy. Use the returned `transaction_id` to review it:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/approvals/TRANSACTION_ID \\
-  -H 'Content-Type: application/json' \\
+curl -X POST http://127.0.0.1:8000/v1/approvals/TRANSACTION_ID \
+  -H "Authorization: Bearer $AGENTSHIELD_REVIEWER_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{"approved":true,"reviewer":"human-reviewer","note":"Verified out of band"}'
 ```
 
@@ -89,14 +92,16 @@ A Function-Call Access Key is not a universal spending-limit mechanism: it is re
 
 ## Security notes before production
 
-- Separate Agent and Human Reviewer API Keys protect the API. The Agent key protects general `/v1` endpoints; the Reviewer key is required for approval endpoints. These are shared bearer secrets, not individual user identities or full role-based access control.
-- Add rate limiting, request signing and immutable/remote audit logs.
-- NEAR FunctionCall execution has a SQLite replay guard. It is currently single-instance protection; distributed idempotency and transaction reconciliation are still needed for production.
+- Separate Agent and Human Reviewer API keys protect different endpoint groups. They are shared bearer secrets, not individual user identities or full role-based access control.
+- Rate limiting is implemented in memory: 60 requests per 60 seconds per client IP, per application process. It is not distributed across workers or instances.
+- SQLite audit-log triggers reject UPDATE and DELETE through the application database connection. Direct database-file modification or trigger removal is not prevented; logs are not remotely replicated.
+- Consider request signing and independently protected remote audit-log storage for higher-assurance deployments.
+- The NEAR FunctionCall replay guard uses SQLite and provides single-instance protection. Distributed idempotency and transaction reconciliation are still needed for production.
 - Moderate blocklist reports and preserve provenance.
-- Add explicit policy versioning and idempotency keys.
-- Add chain-derived account age/activity and contract-code-change evidence.
+- Add explicit policy versioning and distributed idempotency/reconciliation.
+- Add verified chain-derived account and contract evidence before using those signals in risk decisions.
 - Have an independent reviewer audit the signer boundary and NEAR contract permissions.
-- Run on Testnet first. Do not put private keys in `.env`, source control, or prompts.
+- Run on Testnet first. Never commit private keys to source control or paste them into prompts. Use protected secrets management for production.
 
 ## NEAR Testnet integration (read-only verification)
 
@@ -130,16 +135,7 @@ This check verifies the key's current on-chain permission. It does **not** sign 
 
 A FunctionCall access key is scoped to one receiver contract and an optional list of method names. It cannot authorize a normal NEAR transfer or an attached deposit. Its allowance is for gas/transaction fees; it is not a general per-transfer spending limit. If `method_names` is empty, the key can call any method on that contract. Use an explicit method allowlist and a small gas allowance. A FunctionCall key also cannot replace AgentShield's own policy checks or human-approval flow.
 
-## Tests
-
-Run:
-
-```bash
-pytest -q
-```
-
 The test suite covers the original risk/approval wrapper and NEAR FunctionCall permission checks, including FullAccess refusal, wrong contract, disallowed method, attached deposit, multi-action request, and missing server-side contract pin.
-
 > Testnet RPC endpoints are external dependencies. Unit tests mock RPC responses; a successful test run does not claim that a live transaction was signed or broadcast.
 
 ## Secure NEAR Testnet FunctionCall signer (MVP)
