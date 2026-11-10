@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, HTTPException, Query
@@ -10,6 +12,8 @@ from .near_rpc import account_exists, access_key_list, view_access_key, contract
 from .near_security import validate_function_call_key, summarize_access_key
 from .models import NearFunctionCallCheckRequest, NearFunctionCallExecutionRequest
 from .near_signer import submit_function_call, SignerNotConfigured, SignerUnavailable
+import secrets
+from fastapi.responses import JSONResponse
 import json
 
 @asynccontextmanager
@@ -18,6 +22,31 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="AgentShield AI", version="0.2.0", description="Deterministic security gate for AI-agent transactions", lifespan=lifespan)
+@app.middleware("http")
+async def require_api_key(request, call_next):
+    if request.url.path.startswith("/v1/"):
+        expected = os.getenv("AGENTSHIELD_API_KEY", "").strip()
+
+        if not expected:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "API authentication is not configured"}
+            )
+
+        authorization = request.headers.get("Authorization", "")
+        scheme, _, supplied = authorization.partition(" ")
+
+        if (
+            scheme.lower() != "bearer"
+            or not supplied
+            or not secrets.compare_digest(supplied, expected)
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or missing API key"}
+            )
+
+    return await call_next(request)
 engine = RiskEngine()
 
 @app.get("/", include_in_schema=False)

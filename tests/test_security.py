@@ -4,10 +4,17 @@ from app.main import app
 from app.wrapper import AgentShieldWrapper, SecurityBlocked, HumanApprovalRequired
 from app import storage
 
-client = TestClient(app)
+client = TestClient(
+    app,
+    headers={"Authorization": "Bearer test-only-agentshield-key"}
+)
 
 @pytest.fixture(autouse=True)
-def setup_db():
+def setup_db(monkeypatch):
+    monkeypatch.setenv(
+        "AGENTSHIELD_API_KEY",
+        "test-only-agentshield-key"
+    )
     storage.init_db()
 
 def assess(receiver, amount="1", action="transfer"):
@@ -314,3 +321,22 @@ def test_signer_failure_locks_assessment_against_automatic_replay(monkeypatch):
     assert second.status_code == 409
     assert len(calls) == 1
     assert main_module.storage.get_execution(assessment["transaction_id"])["status"] == "FAILED"
+def test_missing_api_key_rejected():
+    response = client.get(
+        "/v1/blocklist",
+        headers={"Authorization": ""}
+    )
+    assert response.status_code == 401
+
+
+def test_invalid_api_key_rejected():
+    response = client.get(
+        "/v1/blocklist",
+        headers={"Authorization": "Bearer wrong-test-key"}
+    )
+    assert response.status_code == 401
+
+
+def test_health_is_public():
+    response = client.get("/health")
+    assert response.status_code == 200
