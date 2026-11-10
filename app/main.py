@@ -96,8 +96,21 @@ def review(transaction_id: str, request: ApprovalRequest):
         raise HTTPException(404, "Transaction assessment not found")
     if item["decision"] != "WARN":
         raise HTTPException(409, "Only WARN transactions can be reviewed")
-    storage.save_approval(transaction_id, request.approved, request.reviewer, request.note)
-    return {"transaction_id":transaction_id, "approved":request.approved, "reviewer":request.reviewer}
+    saved = storage.save_approval(
+        transaction_id,
+        request.approved,
+        request.reviewer,
+        request.note,
+    )
+
+    if not saved:
+        raise HTTPException(409, "Transaction has already been reviewed")
+
+    return {
+        "transaction_id": transaction_id,
+        "approved": request.approved,
+        "reviewer": request.reviewer,
+    }
 
 @app.get("/v1/blocklist")
 def get_blocklist_entries():

@@ -381,3 +381,28 @@ def test_reviewer_key_cannot_access_agent_endpoints():
     )
 
     assert response.status_code == 401
+
+
+def test_transaction_cannot_be_reviewed_twice():
+    warning = assess("merchant-account.near", "12").json()
+    url = f"/v1/approvals/{warning['transaction_id']}"
+    headers = {"Authorization": "Bearer test-only-reviewer-key"}
+
+    first = client.post(
+        url,
+        json={"approved": True, "reviewer": "reviewer-one"},
+        headers=headers
+    )
+
+    second = client.post(
+        url,
+        json={"approved": False, "reviewer": "reviewer-two"},
+        headers=headers
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+    saved = storage.get_approval(warning["transaction_id"])
+    assert saved["approved"] == 1
+    assert saved["reviewer"] == "reviewer-one"

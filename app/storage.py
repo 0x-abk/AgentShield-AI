@@ -57,9 +57,17 @@ def get_decision(txid: str):
         row = db.execute("SELECT * FROM decisions WHERE transaction_id=?", (txid,)).fetchone()
         return dict(row) if row else None
 
-def save_approval(txid: str, approved: bool, reviewer: str, note: str | None):
+def save_approval(txid: str, approved: bool, reviewer: str, note: str | None) -> bool:
     with connect() as db:
-        db.execute("INSERT OR REPLACE INTO approvals(transaction_id,approved,reviewer,note) VALUES(?,?,?,?)", (txid,int(approved),reviewer,note))
+        cursor = db.execute(
+            """
+            INSERT INTO approvals(transaction_id, approved, reviewer, note)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(transaction_id) DO NOTHING
+            """,
+            (txid, int(approved), reviewer, note),
+        )
+        return cursor.rowcount == 1
 
 def get_approval(txid: str):
     with connect() as db:
