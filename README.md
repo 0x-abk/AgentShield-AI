@@ -74,9 +74,9 @@ pytest -q
 
 ## NEAR integration status and limitations
 
-The current Python implementation uses NEAR JSON-RPC only for a read-only Testnet account lookup. It does **not** create keys, sign transactions, submit transactions, or custody funds. The execution wrapper accepts a signer dependency but this repository intentionally supplies only a fake signer in the attack demo.
+The Python implementation includes read-only NEAR Testnet JSON-RPC queries, a FunctionCall signer adapter, and an API execution path with fail-closed security checks. However, the py-near SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting are not currently available or verified in this environment.
 
-For a production NEAR transaction path, add a separately audited signer adapter using the supported NEAR SDK/tooling and configure a Function-Call Access Key restricted to one contract and the minimum required method names. Keep the key outside this API process where possible. Never use a Full-Access key for the agent.
+Before enabling live NEAR Testnet execution, install and validate the supported NEAR SDK in a compatible environment, independently audit the signer adapter, and configure a Function-Call Access Key restricted to one contract and the minimum required method names. Keep the key outside this API process where possible. Never use a Full-Access key for the agent.
 
 A Function-Call Access Key is not a universal spending-limit mechanism: it is restricted to a receiver contract and optionally method names, and it cannot attach NEAR tokens to the call. If an account has only Function-Call keys, it cannot transfer NEAR or manage keys through ordinary transactions; exhausting a finite gas allowance can make the key unusable. A contract method may still have application-specific behavior, so validate the contract itself and do not claim the key blocks every economic effect.
 
