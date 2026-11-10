@@ -15,6 +15,9 @@ from .near_signer import submit_function_call, SignerNotConfigured, SignerUnavai
 import secrets
 from fastapi.responses import JSONResponse
 import json
+from .rate_limit import RateLimiter
+
+rate_limiter = RateLimiter(max_requests=60, window_seconds=60)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,6 +56,17 @@ async def require_api_key(request, call_next):
             return JSONResponse(
                 status_code=401,
                 content={"detail": error_message}
+            )
+
+    if path.startswith("/v1/"):
+        client_id = request.client.host if request.client else "unknown"
+        allowed, retry_after = rate_limiter.allow(client_id)
+
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Try again later."},
+                headers={"Retry-After": str(retry_after)}
             )
 
     return await call_next(request)
