@@ -66,3 +66,31 @@ def test_invalid_api_key_does_not_consume_rate_limit(monkeypatch):
     second = client.get("/v1/history", headers=valid_headers)
     assert second.status_code == 429
     assert "Retry-After" in second.headers
+
+
+def test_rate_limiter_cleanup_removes_expired_clients(monkeypatch):
+    import app.rate_limit as rate_module
+
+    current_time = [100.0]
+
+    monkeypatch.setattr(
+        rate_module.time,
+        "monotonic",
+        lambda: current_time[0]
+    )
+
+    limiter = RateLimiter(
+        max_requests=2,
+        window_seconds=10,
+        cleanup_interval=5
+    )
+
+    assert limiter.allow("old-agent") == (True, 0)
+    assert "old-agent" in limiter.requests
+
+    current_time[0] = 111.0
+
+    assert limiter.allow("new-agent") == (True, 0)
+
+    assert "old-agent" not in limiter.requests
+    assert "new-agent" in limiter.requests
