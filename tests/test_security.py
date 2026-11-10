@@ -372,3 +372,12 @@ def test_reviewer_key_can_approve_transaction(monkeypatch):
     )
 
     assert response.status_code == 200
+
+
+def test_reviewer_key_cannot_access_agent_endpoints():
+    response = client.get(
+        "/v1/blocklist",
+        headers={"Authorization": "Bearer test-only-reviewer-key"}
+    )
+
+    assert response.status_code == 401
