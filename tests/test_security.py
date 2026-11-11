@@ -324,6 +324,7 @@ def test_signer_failure_locks_assessment_against_automatic_replay(monkeypatch):
     first = client.post("/v1/near/execute-function-call", json=payload)
     second = client.post("/v1/near/execute-function-call", json=payload)
     assert first.status_code == 502
+    assert "simulated RPC timeout" not in first.text
     assert second.status_code == 409
     assert len(calls) == 1
     assert main_module.storage.get_execution(assessment["transaction_id"])["status"] == "FAILED"

@@ -264,7 +264,7 @@ async def near_execute_function_call(request: NearFunctionCallExecutionRequest):
     except (SignerNotConfigured, SignerUnavailable) as exc:
         storage.finish_execution(request.transaction_id, status="FAILED", error=str(exc))
         status_code = 503 if isinstance(exc, SignerNotConfigured) else 502
-        raise HTTPException(status_code, str(exc)) from exc
+        raise HTTPException(status_code, "NEAR signer could not process the request; execution is locked pending chain reconciliation") from exc
     except Exception as exc:
         storage.finish_execution(request.transaction_id, status="FAILED", error="Unexpected signer failure")
         raise HTTPException(502, "Unexpected signer failure; execution is locked pending chain reconciliation") from exc
