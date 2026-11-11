@@ -1,6 +1,7 @@
 import app.main as main_module
 from fastapi.testclient import TestClient
 from app.rate_limit import RateLimiter
+from concurrent.futures import ThreadPoolExecutor
 
 
 def test_rate_limiter_blocks_after_limit():
@@ -133,3 +134,19 @@ def test_forwarded_for_cannot_bypass_rate_limit(monkeypatch):
 
     assert first.status_code == 200
     assert second.status_code == 429
+
+
+
+def test_rate_limiter_handles_concurrent_requests():
+    limiter = RateLimiter(max_requests=5, window_seconds=60)
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        results = list(
+            executor.map(limiter.allow, ["agent-1"] * 20)
+        )
+
+    allowed = sum(1 for ok, _ in results if ok)
+    blocked = sum(1 for ok, _ in results if not ok)
+
+    assert allowed == 5
+    assert blocked == 15
