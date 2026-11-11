@@ -274,7 +274,7 @@ no separate frontend build step is required.
 
 Dashboard counters summarize the latest 100 assessments returned by the history
 endpoint. WARN items leave the pending-review queue after a reviewer records a
-decision. The dashboard uses a separate Agent API Key for general protected `/v1` API calls and a Human Reviewer API Key for approval actions. Keys are held in browser memory only and must be entered again after a reload.
+decision. The dashboard uses a separate Agent API Key for general protected `/v1` API calls and a Human Reviewer API Key for approval actions. The Agent API key is held in browser memory only and must be entered again after a reload. The dashboard's Disconnect button clears the Agent API key from JavaScript memory, clears both key inputs, and resets the displayed dashboard data. The Human Reviewer API Key input is cleared after each review attempt.
 It remains a prototype and is not production-hardened. Do not expose it publicly
 or use it to manage real funds without HTTPS, rate limiting, hardened key custody,
 appropriate authorization controls, and an independent security review.
@@ -304,6 +304,6 @@ The NEAR FunctionCall signer adapter and API execution path are implemented in t
 
 However, the `py-near` SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting have not been verified and are not currently available in this environment.
 
-The 38 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
+The 46 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
 
 Do not configure real funds or use this prototype on Mainnet. Live Testnet integration remains a future validation step.
