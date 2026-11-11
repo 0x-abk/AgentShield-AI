@@ -104,3 +104,32 @@ def test_rate_limiter_keeps_clients_separate():
     assert limiter.allow("agent-1")[0] is False
 
     assert limiter.allow("agent-2") == (True, 0)
+
+
+def test_forwarded_for_cannot_bypass_rate_limit(monkeypatch):
+    monkeypatch.setenv(
+        "AGENTSHIELD_API_KEY",
+        "test-only-agentshield-key"
+    )
+    monkeypatch.setattr(
+        main_module,
+        "rate_limiter",
+        RateLimiter(max_requests=1, window_seconds=60)
+    )
+
+    client = TestClient(main_module.app)
+    headers = {
+        "Authorization": "Bearer test-only-agentshield-key"
+    }
+
+    first = client.get(
+        "/v1/history",
+        headers={**headers, "X-Forwarded-For": "1.1.1.1"}
+    )
+    second = client.get(
+        "/v1/history",
+        headers={**headers, "X-Forwarded-For": "8.8.8.8"}
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
