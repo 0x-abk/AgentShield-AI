@@ -5,7 +5,7 @@ from typing import Any
 DB_PATH = Path(__file__).resolve().parent.parent / "agentshield.db"
 
 def connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
