@@ -505,3 +505,40 @@ def test_missing_reviewer_key_cannot_access_audit_logs():
     response = client.get("/v1/audit-logs/test-transaction")
 
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize("endpoint,method_name", [
+    ("/v1/near/account/agent.testnet", "account_exists"),
+    ("/v1/near/access-keys/agent.testnet", "access_key_list"),
+    ("/v1/near/contract/vault.testnet/code", "contract_code"),
+])
+def test_near_read_endpoints_hide_rpc_errors(monkeypatch, endpoint, method_name):
+    import app.main as main_module
+
+    async def fake_rpc(*args, **kwargs):
+        raise RuntimeError("private RPC diagnostic: secret-token")
+
+    monkeypatch.setattr(main_module, method_name, fake_rpc)
+    response = client.get(endpoint)
+
+    assert response.status_code == 502
+    assert "secret-token" not in response.text
+
+
+def test_near_validate_endpoint_hides_rpc_errors(monkeypatch):
+    import app.main as main_module
+
+    async def fake_view_access_key(account_id, public_key):
+        raise RuntimeError("private RPC diagnostic: secret-token")
+
+    monkeypatch.setattr(main_module, "view_access_key", fake_view_access_key)
+
+    response = client.post("/v1/near/validate-function-call", json={
+        "account_id": "agent.testnet",
+        "public_key": "ed25519:1234567890abcdef",
+        "requested_contract": "vault.testnet",
+        "method_name": "deposit",
+    })
+
+    assert response.status_code == 502
+    assert "secret-token" not in response.text

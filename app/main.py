@@ -143,8 +143,8 @@ async def near_account(account_id: str):
     try:
         exists = await account_exists(account_id)
         return {"account_id":account_id, "exists":exists, "network":"testnet"}
-    except Exception as exc:
-        raise HTTPException(502, f"NEAR RPC unavailable: {exc}")
+    except Exception:
+        raise HTTPException(502, "NEAR RPC unavailable; please try again later")
 
 
 @app.get("/v1/near/access-keys/{account_id}")
@@ -155,8 +155,8 @@ async def near_access_keys(account_id: str):
         return {"account_id": account_id, "network": NETWORK,
                 "keys": [summarize_access_key(item.get("public_key", ""), item)
                          for item in result.get("keys", [])]}
-    except Exception as exc:
-        raise HTTPException(502, f"NEAR RPC unavailable: {exc}")
+    except Exception:
+        raise HTTPException(502, "NEAR RPC unavailable; please try again later")
 
 
 @app.post("/v1/near/validate-function-call")
@@ -167,8 +167,8 @@ async def near_validate_function_call(request: NearFunctionCallCheckRequest):
     """
     try:
         onchain_key = await view_access_key(request.account_id, request.public_key)
-    except Exception as exc:
-        raise HTTPException(502, f"Unable to verify access key on NEAR: {exc}")
+    except Exception:
+        raise HTTPException(502, "Unable to verify access key on NEAR; please try again later")
     allowed_contract = os.getenv("NEAR_ALLOWED_CONTRACT_ID", "").strip().lower()
     if not allowed_contract:
         raise HTTPException(503, "NEAR_ALLOWED_CONTRACT_ID is not configured; refusing to validate an unpinned contract")
@@ -188,8 +188,8 @@ async def near_contract_code(contract_id: str):
         result = await contract_code(contract_id)
         return {"contract_id": contract_id, "code_hash": result.get("hash"),
                 "block_height": result.get("block_height"), "network": NETWORK}
-    except Exception as exc:
-        raise HTTPException(502, f"NEAR RPC unavailable: {exc}")
+    except Exception:
+        raise HTTPException(502, "NEAR RPC unavailable; please try again later")
 
 
 @app.post("/v1/near/execute-function-call")
