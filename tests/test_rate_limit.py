@@ -94,3 +94,13 @@ def test_rate_limiter_cleanup_removes_expired_clients(monkeypatch):
 
     assert "old-agent" not in limiter.requests
     assert "new-agent" in limiter.requests
+
+
+def test_rate_limiter_keeps_clients_separate():
+    limiter = RateLimiter(max_requests=2, window_seconds=60)
+
+    assert limiter.allow("agent-1") == (True, 0)
+    assert limiter.allow("agent-1") == (True, 0)
+    assert limiter.allow("agent-1")[0] is False
+
+    assert limiter.allow("agent-2") == (True, 0)
