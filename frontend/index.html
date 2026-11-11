@@ -13,6 +13,7 @@
 <label>Human Reviewer API Key</label>
 <input id="reviewerApiKeyInput" type="password" placeholder="Enter your Reviewer API Key" autocomplete="off">
 <button class="primary" id="connectApi" type="button">Connect to AgentShield</button>
+<button class="secondary" id="disconnectApi" type="button" style="width:100%;margin-top:8px">Disconnect</button>
 </section>
 <section class="cards"><div class="card"><span>Total assessments</span><div class="metric" id="total">—</div></div><div class="card"><span>Allowed</span><div class="metric" style="color:var(--green)" id="allowed">—</div></div><div class="card"><span>Needs review</span><div class="metric" style="color:var(--yellow)" id="warned">—</div></div><div class="card"><span>Blocked</span><div class="metric" style="color:var(--red)" id="blocked">—</div></div></section>
 <div class="layout"><div><section class="panel"><h2>Assess a transaction</h2><p class="hint">The deterministic policy engine makes the security decision. The LLM is not trusted to approve transactions.</p><form id="assessForm"><div class="two"><div><label>Agent ID</label><input name="agent_id" value="agent-001" required></div><div><label>Action</label><select name="action"><option value="transfer">Transfer</option><option value="function_call">Function Call</option></select></div></div><label>Receiver account / contract</label><input name="receiver" placeholder="example.near" required><div class="two"><div><label>Amount</label><input name="amount" value="1" required></div><div><label>Asset</label><select name="asset"><option>NEAR</option><option>USDC</option><option>OTHER</option></select></div></div><label>Function method (optional)</label><input name="function_method" placeholder="e.g. deposit"><label>Function arguments JSON (optional)</label><textarea name="function_args" rows="2">{}</textarea><button class="primary" type="submit">Run security assessment →</button></form><div id="assessment" class="result"></div></section>
@@ -33,19 +34,21 @@ async function api(path,opts={}){
 }function pill(v){return `<span class="pill ${v}">${v}</span>`}function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function refresh(){try{const h=await api('/v1/history?limit=100');$('#apiStatus').textContent='● API connected';$('#total').textContent=h.length;$('#allowed').textContent=h.filter(x=>x.decision==='ALLOW').length;$('#warned').textContent=h.filter(x=>x.decision==='WARN').length;$('#blocked').textContent=h.filter(x=>x.decision==='BLOCK').length;$('#history').innerHTML=h.length?h.map(x=>`<tr><td>${pill(x.decision)}</td><td>${esc(x.receiver)}</td><td>${esc(x.agent_id)}</td><td>${esc(x.risk_level)} · ${x.risk_score}</td><td>${esc(x.created_at)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">No assessments yet.</td></tr>';const q=h.filter(x=>x.decision==='WARN'&&x.approval_status==null&&x.agent_id!=='test-agent');$('#approvalQueue').innerHTML=q.length?q.map(x=>`<div style="border-bottom:1px solid var(--line);padding:10px 0"><b>${esc(x.receiver)}</b><div class="sub">${esc(x.agent_id)} · ${esc(x.transaction_id)}</div><div class="actions"><button class="secondary" onclick="review('${x.transaction_id}',true)">Approve</button><button class="danger" onclick="review('${x.transaction_id}',false)">Reject</button></div></div>`).join(''):'<div class="empty">No pending reviews.</div>'}catch(e){$('#apiStatus').textContent='● API unavailable';$('#apiStatus').style.color='var(--red)'}}
 async function review(id,approved){
-  const reviewerKey=$('#reviewerApiKeyInput').value.trim();
+  const reviewerInput=$('#reviewerApiKeyInput');
+  const reviewerKey=reviewerInput.value.trim();
   if(!reviewerKey){toast('Enter your Reviewer API Key first.');return}
-  const reviewer=prompt('Reviewer name:');
-  if(!reviewer)return;
   try{
+    const reviewer=prompt('Reviewer name:');
+    if(!reviewer)return;
     await api(`/v1/approvals/${id}`,{
       method:'POST',
       body:JSON.stringify({approved,reviewer,note:'Reviewed from dashboard'}),
       headers:{'Authorization':`Bearer ${reviewerKey}`}
     });
     toast(approved?'Approval recorded.':'Transaction rejected.');
-    refresh()
+    refresh();
   }catch(e){toast(e.message)}
+  finally{reviewerInput.value='';}
 }
 $('#assessForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);let args;try{args=JSON.parse(f.get('function_args')||'{}')}catch{toast('Function arguments must be valid JSON.');return}const body={agent_id:f.get('agent_id'),receiver:f.get('receiver'),amount:f.get('amount'),asset:f.get('asset'),action:f.get('action'),function_method:f.get('function_method')||null,function_args:args};try{const d=await api('/v1/assess',{method:'POST',body:JSON.stringify(body)});const box=$('#assessment');box.className='result show';box.innerHTML=`<div class="decision ${d.decision}">${d.decision} · ${d.risk_level} RISK</div><div>Risk score: <b>${d.risk_score}/100</b></div><div class="reason">${d.reasons.map(esc).join('<br>')}</div><div class="mono">ID: ${esc(d.transaction_id)}</div>${d.requires_human_approval?'<p style="color:var(--yellow)">Human approval is required before signing.</p>':''}`;toast('Assessment completed: '+d.decision);refresh()}catch(err){toast(err.message)}});
 $('#blockForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{await api('/v1/blocklist',{method:'POST',body:JSON.stringify(Object.fromEntries(f))});toast('Blocklist report submitted.');e.target.reset();refresh()}catch(err){toast(err.message)}});
@@ -71,6 +74,20 @@ $('#connectApi').addEventListener('click',async()=>{
   }
 });
 
+$('#disconnectApi').addEventListener('click',()=>{
+  apiKey='';
+  $('#apiKeyInput').value='';
+  $('#reviewerApiKeyInput').value='';
+  $('#apiStatus').textContent='● API disconnected';
+  $('#apiStatus').style.color='var(--muted)';
+  ['total','allowed','warned','blocked'].forEach(id=>$('#'+id).textContent='—');
+  $('#history').innerHTML='<tr><td colspan="5" class="empty">Connect to load security history.</td></tr>';
+  $('#approvalQueue').textContent='Connect to view pending reviews.';
+  $('#nearResult').className='result';
+  $('#nearResult').textContent='';
+  $('#assessment').className='result';
+  $('#assessment').textContent='';
+});
 $('#apiKeyInput').addEventListener('keydown',e=>{
   if(e.key==='Enter')$('#connectApi').click();
 });
