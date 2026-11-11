@@ -543,3 +543,21 @@ def test_near_validate_endpoint_hides_rpc_errors(monkeypatch):
 
     assert response.status_code == 502
     assert "secret-token" not in response.text
+
+
+def test_missing_agent_key_configuration_returns_503(monkeypatch):
+    monkeypatch.delenv("AGENTSHIELD_API_KEY")
+
+    response = client.get("/v1/blocklist")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "API authentication is not configured"
+
+
+def test_missing_reviewer_key_configuration_returns_503(monkeypatch):
+    monkeypatch.delenv("AGENTSHIELD_REVIEWER_API_KEY")
+
+    response = client.get("/v1/audit-logs/test-transaction")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "API authentication is not configured"
