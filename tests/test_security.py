@@ -430,6 +430,25 @@ def test_approval_creates_audit_log():
     assert logs[0]["actor"] == "audit-reviewer"
 
 
+
+def test_approval_rolls_back_when_audit_log_fails(monkeypatch):
+    warning = assess("merchant-account.near", "12").json()
+
+    def fail_audit_log(*args, **kwargs):
+        raise RuntimeError("Simulated audit log failure")
+
+    monkeypatch.setattr(storage, "add_audit_log", fail_audit_log)
+
+    with pytest.raises(RuntimeError, match="Simulated audit log failure"):
+        storage.save_approval(
+            warning["transaction_id"],
+            True,
+            "rollback-reviewer",
+            "Testing rollback",
+        )
+
+    assert storage.get_approval(warning["transaction_id"]) is None
+
 def test_audit_log_cannot_be_updated_or_deleted():
     warning = assess("merchant-account.near", "12").json()
 
