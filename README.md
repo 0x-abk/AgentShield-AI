@@ -22,17 +22,71 @@ The language model is not trusted to make security decisions. It can produce exp
 
 Python 3.11+ is recommended.
 
+### 1. Clone and install
+
 ```bash
+git clone https://github.com/0x-abk/AgentShield-AI.git
+cd AgentShield-AI
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\\Scripts\\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env             # optional; testnet is the default
+```
+
+On Windows, activate the environment with:
+`.venv\Scripts\activate`
+
+### 2. Configure API authentication
+
+Create your local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Generate two different random API keys:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Open `.env` in a text editor. Replace the placeholder values for:
+- `AGENTSHIELD_API_KEY`
+- `AGENTSHIELD_REVIEWER_API_KEY`
+
+Use the first generated value for the Agent key and the second for the Reviewer key. Keep them different and private.
+
+For the local demo, you do not need a real NEAR private key. Never put a real private key in this demo configuration or commit your `.env` file.
+
+Load the environment variables in your terminal:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+### 3. Start the API
+
+```bash
 uvicorn app.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for the interactive API.
 
+Keep this terminal running while you test the API. Use a second terminal for the commands below.
+
 ## Try it
+
+In the second terminal, enter the project folder, activate the virtual environment, and load the API keys:
+
+```bash
+cd AgentShield-AI
+source .venv/bin/activate
+set -a
+source .env
+set +a
+```
 
 Safe receiver:
 
@@ -250,6 +304,6 @@ The NEAR FunctionCall signer adapter and API execution path are implemented in t
 
 However, the `py-near` SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting have not been verified and are not currently available in this environment.
 
-The 27 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
+The 38 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
 
 Do not configure real funds or use this prototype on Mainnet. Live Testnet integration remains a future validation step.
