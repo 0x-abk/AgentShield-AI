@@ -1,13 +1,19 @@
 import json, sqlite3, uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 DB_PATH = Path(__file__).resolve().parent.parent / "agentshield.db"
 
+@contextmanager
 def connect():
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 def init_db():
     with connect() as db:
