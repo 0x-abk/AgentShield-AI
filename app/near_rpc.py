@@ -6,7 +6,12 @@ NETWORK = os.getenv("NEAR_NETWORK", "testnet").lower()
 if NETWORK not in {"testnet", "mainnet"}:
     raise RuntimeError("NEAR_NETWORK must be 'testnet' or 'mainnet'")
 DEFAULT_RPC = "https://rpc.testnet.near.org" if NETWORK == "testnet" else "https://rpc.mainnet.near.org"
-RPC_URL = os.getenv("NEAR_RPC_URL", DEFAULT_RPC)
+RPC_URL = os.getenv("NEAR_RPC_URL", DEFAULT_RPC).strip()
+if RPC_URL != DEFAULT_RPC:
+    raise RuntimeError(
+        f"NEAR_RPC_URL must match NEAR_NETWORK={NETWORK}; "
+        "only the official NEAR RPC endpoint is permitted"
+    )
 
 
 async def rpc(method: str, params: dict):

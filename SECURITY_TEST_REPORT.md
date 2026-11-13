@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-The automated test suite contains 38 test cases covering:
+The automated test suite contains 95 passing tests covering:
 
 - ALLOW, WARN, and BLOCK risk decisions.
 - Blocklist enforcement and invalid transaction amounts.
@@ -49,12 +49,11 @@ Automated tests use local mocks and test doubles for NEAR RPC and signer operati
 
 **The test suite does not prove that a live NEAR Testnet transaction has been signed or broadcast.**
 
-Live signing remains unverified in the current Android Termux environment because the required py-near SDK could not be installed successfully.
+The py-near==1.2.22 dependency is installed and pinned in requirements.txt. Live Testnet signing and broadcast have not yet been verified.
 
 ## 6. Test results
 
-- Collected automated test cases: 38.
-- Previously completed full test run: 38 passed.
+- Latest full test run: 95 passed.
 - A Starlette TestClient / AnyIO deprecation warning was reported.
 - No claim of live blockchain transaction execution is made.
 

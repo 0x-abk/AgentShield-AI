@@ -1,5 +1,5 @@
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from typing import Any
 
 class Decision(str, Enum):
@@ -43,11 +43,53 @@ class ApprovalRequest(BaseModel):
     reviewer: str = Field(min_length=1, max_length=100)
     note: str | None = Field(default=None, max_length=500)
 
+    @field_validator("reviewer", "note")
+    @classmethod
+    def normalize_approval_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("field cannot be empty or whitespace")
+        return value
+
 class BlocklistReport(BaseModel):
     receiver: str = Field(min_length=2, max_length=64)
     reason: str = Field(min_length=5, max_length=500)
-    evidence_url: str | None = Field(default=None, max_length=500)
+    evidence_url: HttpUrl | None = None
     reporter: str = Field(min_length=1, max_length=100)
+
+    @field_validator("receiver")
+    @classmethod
+    def normalize_receiver(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value or any(ch.isspace() for ch in value):
+            raise ValueError("receiver must be a valid account identifier")
+        return value
+
+    @field_validator("reason", "reporter")
+    @classmethod
+    def normalize_report_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("field cannot be empty or whitespace")
+        return value
+
+
+class BlocklistReviewRequest(BaseModel):
+    approved: bool
+    reviewer: str = Field(min_length=1, max_length=100)
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reviewer", "note")
+    @classmethod
+    def normalize_review_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("field cannot be empty or whitespace")
+        return value
 
 class NearFunctionCallCheckRequest(BaseModel):
     account_id: str = Field(min_length=2, max_length=64)

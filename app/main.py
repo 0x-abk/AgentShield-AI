@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from pathlib import Path
-from .models import TransactionRequest, RiskDecision, ApprovalRequest, BlocklistReport
+from .models import TransactionRequest, RiskDecision, ApprovalRequest, BlocklistReport, BlocklistReviewRequest
 from .risk_engine import RiskEngine
 from . import storage
 from .near_rpc import account_exists, access_key_list, view_access_key, contract_code, NETWORK
@@ -33,6 +33,7 @@ async def require_api_key(request, call_next):
         if (
             path.startswith("/v1/approvals/")
             or path.startswith("/v1/audit-logs/")
+            or path.startswith("/v1/blocklist/reports/")
         ):
             env_name = "AGENTSHIELD_REVIEWER_API_KEY"
             error_message = "Invalid or missing reviewer API key"
@@ -128,10 +129,37 @@ def get_transaction_audit_logs(transaction_id: str):
 def get_blocklist_entries():
     return list(storage.get_blocklist().values())
 
-@app.post("/v1/blocklist")
+@app.post("/v1/blocklist", status_code=202)
 def add_blocklist(report: BlocklistReport):
-    storage.report_block(report.receiver, report.reason, report.evidence_url, report.reporter)
-    return {"status":"reported", "receiver":report.receiver.lower()}
+    report_id = storage.submit_blocklist_report(
+        report.receiver,
+        report.reason,
+        str(report.evidence_url) if report.evidence_url is not None else None,
+        report.reporter,
+    )
+    return {
+        "status": "pending",
+        "report_id": report_id,
+        "receiver": report.receiver,
+    }
+
+
+@app.post("/v1/blocklist/reports/{report_id}/review")
+def review_blocklist_report(report_id: str, request: BlocklistReviewRequest):
+    result = storage.review_blocklist_report(
+        report_id,
+        request.approved,
+        request.reviewer,
+        request.note,
+    )
+
+    if result is None:
+        raise HTTPException(404, "Blocklist report not found")
+
+    if result is False:
+        raise HTTPException(409, "Blocklist report has already been reviewed")
+
+    return result
 
 @app.get("/v1/history")
 def get_history(limit: int = Query(default=50, ge=1, le=200)):
@@ -142,7 +170,7 @@ async def near_account(account_id: str):
     """Optional testnet account existence check; does not infer trustworthiness."""
     try:
         exists = await account_exists(account_id)
-        return {"account_id":account_id, "exists":exists, "network":"testnet"}
+        return {"account_id": account_id, "exists": exists, "network": NETWORK}
     except Exception:
         raise HTTPException(502, "NEAR RPC unavailable; please try again later")
 
@@ -195,6 +223,9 @@ async def near_contract_code(contract_id: str):
 @app.post("/v1/near/execute-function-call")
 async def near_execute_function_call(request: NearFunctionCallExecutionRequest):
     """Fail-closed Testnet execution endpoint. Only one zero-deposit FunctionCall is supported."""
+    if request.gas != 30_000_000_000_000:
+        raise HTTPException(403, "Gas must be exactly 30 TGas")
+
     assessment = storage.get_decision(request.transaction_id)
     if not assessment:
         raise HTTPException(404, "Transaction assessment not found")
@@ -258,7 +289,7 @@ async def near_execute_function_call(request: NearFunctionCallExecutionRequest):
     try:
         result = await submit_function_call(
             account_id=request.account_id, contract_id=request.contract_id,
-            method_name=request.method_name, args=request.args, gas=request.gas,
+            method_name=request.method_name, args=request.args, gas=30_000_000_000_000,
             deposit_yocto=0,
         )
     except (SignerNotConfigured, SignerUnavailable) as exc:
@@ -270,6 +301,22 @@ async def near_execute_function_call(request: NearFunctionCallExecutionRequest):
         raise HTTPException(502, "Unexpected signer failure; execution is locked pending chain reconciliation") from exc
 
     tx_hash = result.get("transaction_hash") if isinstance(result, dict) else None
+    if not isinstance(tx_hash, str) or not tx_hash.strip():
+        storage.finish_execution(
+            request.transaction_id,
+            status="FAILED",
+            error="Signer returned no transaction hash",
+        )
+        raise HTTPException(
+            502,
+            "NEAR signer returned no transaction hash; execution is locked pending chain reconciliation",
+        )
+
     storage.finish_execution(request.transaction_id, status="SUBMITTED", tx_hash=tx_hash)
-    return {"decision": assessment["decision"], "signing_performed": True,
-            "network": "testnet", "transaction_id": request.transaction_id, **result}
+    return {
+        **result,
+        "decision": assessment["decision"],
+        "signing_performed": True,
+        "network": "testnet",
+        "transaction_id": request.transaction_id,
+    }

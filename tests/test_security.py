@@ -1,8 +1,13 @@
 import pytest
+import json
+import uuid
 from fastapi.testclient import TestClient
 from app.main import app
 from app.wrapper import AgentShieldWrapper, SecurityBlocked, HumanApprovalRequired
 from app import storage
+import app.main as main_module
+from app.rate_limit import RateLimiter
+from app.models import BlocklistReviewRequest
 
 client = TestClient(
     app,
@@ -10,7 +15,7 @@ client = TestClient(
 )
 
 @pytest.fixture(autouse=True)
-def setup_db(monkeypatch):
+def setup_db(tmp_path, monkeypatch):
     monkeypatch.setenv(
         "AGENTSHIELD_API_KEY",
         "test-only-agentshield-key"
@@ -19,7 +24,11 @@ def setup_db(monkeypatch):
         "AGENTSHIELD_REVIEWER_API_KEY",
         "test-only-reviewer-key"
     )
+    monkeypatch.setattr(
+        storage, "DB_PATH", tmp_path / "test-agentshield.db"
+    )
     storage.init_db()
+    monkeypatch.setattr(main_module, "rate_limiter", RateLimiter())
 
 def assess(receiver, amount="1", action="transfer"):
     return client.post("/v1/assess", json={"agent_id":"test-agent", "receiver":receiver,
@@ -46,14 +55,25 @@ def test_block_never_calls_signer():
 
 def test_warn_requires_human_approval():
     result = assess("merchant-account.near", "12").json()
-    wrapper = AgentShieldWrapper(lambda tx: {"ok":True})
+    saved = storage.get_decision(result["transaction_id"])
+    transaction = json.loads(saved["payload"])
+    called = []
+    wrapper = AgentShieldWrapper(lambda tx: called.append(tx) or {"ok": True})
+
     with pytest.raises(HumanApprovalRequired):
-        wrapper.execute(result, {"receiver":"merchant-account.near"})
-    client.post(
-    f"/v1/approvals/{result['transaction_id']}",
-    json={"approved": True, "reviewer": "human-reviewer"},
-    headers={"Authorization": "Bearer test-only-reviewer-key"}
-)
+        wrapper.execute(result, transaction)
+    assert called == []
+
+    response = client.post(
+        f"/v1/approvals/{result['transaction_id']}",
+        json={"approved": True, "reviewer": "human-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+    assert response.status_code == 200
+
+    wrapper.execute(result, transaction)
+    assert called == [transaction]
+
 def test_invalid_zero_amount_rejected():
     assert assess("safe-account.near", "0").status_code == 200
     assert assess("safe-account.near", "0").json()["decision"] == "BLOCK"
@@ -188,7 +208,14 @@ def test_near_execute_allows_only_after_policy_and_chain_key_checks(monkeypatch)
     called = []
     async def fake_submit(**kwargs):
         called.append(kwargs)
-        return {"submitted": True, "network": "testnet", "transaction_hash": "mock-hash"}
+        return {
+            "submitted": True,
+            "network": "mainnet",
+            "transaction_hash": "mock-hash",
+            "decision": "BLOCK",
+            "signing_performed": False,
+            "transaction_id": "attacker-controlled-id",
+        }
     monkeypatch.setattr(main_module, "view_access_key", fake_view_access_key)
     monkeypatch.setattr(main_module, "submit_function_call", fake_submit)
     assessment = client.post("/v1/assess", json={"agent_id":"test-agent", "receiver":"vault.testnet", "amount":"0", "asset":"NEAR", "action":"function_call", "function_method":"deposit", "function_args":{"account_id":"alice.testnet"}}).json()
@@ -200,6 +227,9 @@ def test_near_execute_allows_only_after_policy_and_chain_key_checks(monkeypatch)
     })
     assert response.status_code == 200, response.text
     assert response.json()["signing_performed"] is True
+    assert response.json()["decision"] == "ALLOW"
+    assert response.json()["network"] == "testnet"
+    assert response.json()["transaction_id"] == assessment["transaction_id"]
     assert response.json()["transaction_hash"] == "mock-hash"
     assert len(called) == 1
 
@@ -328,6 +358,65 @@ def test_signer_failure_locks_assessment_against_automatic_replay(monkeypatch):
     assert second.status_code == 409
     assert len(calls) == 1
     assert main_module.storage.get_execution(assessment["transaction_id"])["status"] == "FAILED"
+
+def test_missing_transaction_hash_fails_closed(monkeypatch):
+    import app.main as main_module
+
+    monkeypatch.setenv("NEAR_ALLOWED_CONTRACT_ID", "vault.testnet")
+    monkeypatch.setenv("NEAR_SIGNER_ACCOUNT_ID", "agent.testnet")
+    monkeypatch.setenv("NEAR_SIGNER_PUBLIC_KEY", "ed25519:1234567890abcdef")
+    monkeypatch.setenv("NEAR_ALLOWED_METHODS", "deposit")
+
+    async def fake_view_access_key(account_id, public_key):
+        return {"permission": {"FunctionCall": {
+            "receiver_id": "vault.testnet",
+            "method_names": ["deposit"],
+            "allowance": "1000",
+        }}}
+
+    calls = []
+
+    async def fake_submit(**kwargs):
+        calls.append(kwargs)
+        return {
+            "submitted": True,
+            "network": "testnet",
+            "transaction_hash": None,
+        }
+
+    monkeypatch.setattr(main_module, "view_access_key", fake_view_access_key)
+    monkeypatch.setattr(main_module, "submit_function_call", fake_submit)
+
+    assessment = client.post("/v1/assess", json={
+        "agent_id": "test-agent",
+        "receiver": "vault.testnet",
+        "amount": "0",
+        "asset": "NEAR",
+        "action": "function_call",
+        "function_method": "deposit",
+        "function_args": {"account_id": "alice.testnet"},
+    }).json()
+
+    payload = {
+        "transaction_id": assessment["transaction_id"],
+        "account_id": "agent.testnet",
+        "public_key": "ed25519:1234567890abcdef",
+        "contract_id": "vault.testnet",
+        "method_name": "deposit",
+        "args": {"account_id": "alice.testnet"},
+    }
+
+    first = client.post("/v1/near/execute-function-call", json=payload)
+    second = client.post("/v1/near/execute-function-call", json=payload)
+
+    assert first.status_code == 502
+    assert "no transaction hash" in first.text
+    assert second.status_code == 409
+    assert len(calls) == 1
+    execution = main_module.storage.get_execution(assessment["transaction_id"])
+    assert execution["status"] == "FAILED"
+    assert execution["tx_hash"] is None
+
 def test_missing_api_key_rejected():
     response = client.get(
         "/v1/blocklist",
@@ -561,3 +650,446 @@ def test_missing_reviewer_key_configuration_returns_503(monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["detail"] == "API authentication is not configured"
+
+
+def test_blocklist_report_waits_for_reviewer():
+    response = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "scam-account.near",
+            "reason": "Suspicious transaction activity",
+            "evidence_url": "https://example.com/evidence",
+            "reporter": "test-agent",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
+    assert response.json()["report_id"]
+    assert "scam-account.near" not in storage.get_blocklist()
+
+
+def test_reviewer_can_approve_blocklist_report():
+    submitted = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "approved-scam.near",
+            "reason": "Confirmed suspicious activity",
+            "reporter": "test-agent",
+        },
+    )
+    report_id = submitted.json()["report_id"]
+
+    reviewed = client.post(
+        f"/v1/blocklist/reports/{report_id}/review",
+        json={"approved": True, "reviewer": "human-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "APPROVED"
+    assert "approved-scam.near" in storage.get_blocklist()
+
+
+def test_reviewer_can_reject_blocklist_report():
+    submitted = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "rejected-scam.near",
+            "reason": "Unverified suspicious activity",
+            "reporter": "test-agent",
+        },
+    )
+    report_id = submitted.json()["report_id"]
+
+    reviewed = client.post(
+        f"/v1/blocklist/reports/{report_id}/review",
+        json={"approved": False, "reviewer": "human-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "REJECTED"
+    assert "rejected-scam.near" not in storage.get_blocklist()
+
+
+def test_agent_key_cannot_review_blocklist_report():
+    submitted = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "restricted-scam.near",
+            "reason": "Suspicious transaction activity",
+            "reporter": "test-agent",
+        },
+    )
+    report_id = submitted.json()["report_id"]
+
+    reviewed = client.post(
+        f"/v1/blocklist/reports/{report_id}/review",
+        json={"approved": True, "reviewer": "unauthorized-agent"},
+    )
+
+    assert reviewed.status_code == 401
+    assert "restricted-scam.near" not in storage.get_blocklist()
+
+
+def test_blocklist_report_cannot_be_reviewed_twice():
+    submitted = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "once-only.near",
+            "reason": "Suspicious transaction activity",
+            "reporter": "test-agent",
+        },
+    )
+    report_id = submitted.json()["report_id"]
+    url = f"/v1/blocklist/reports/{report_id}/review"
+    headers = {"Authorization": "Bearer test-only-reviewer-key"}
+    payload = {"approved": True, "reviewer": "reviewer-one"}
+
+    first = client.post(url, json=payload, headers=headers)
+    second = client.post(url, json=payload, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+
+def test_approved_duplicate_report_does_not_overwrite_active_blocklist():
+    receiver = f"duplicate-{uuid.uuid4().hex}.near"
+
+    with storage.connect() as db:
+        db.execute(
+            """
+            INSERT INTO blocklist
+            (receiver, reason, evidence_url, reporter)
+            VALUES (?, ?, ?, ?)
+            """,
+            (receiver, "Original reason", None, "original-reporter"),
+        )
+
+    submitted = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": receiver,
+            "reason": "New report with different evidence",
+            "evidence_url": "https://example.com/evidence",
+            "reporter": "new-reporter",
+        },
+    )
+    assert submitted.status_code == 202
+
+    report_id = submitted.json()["report_id"]
+
+    reviewed = client.post(
+        f"/v1/blocklist/reports/{report_id}/review",
+        json={"approved": True, "reviewer": "human-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+    assert reviewed.status_code == 200
+
+    active = storage.get_blocklist()[receiver]
+    assert active["reason"] == "Original reason"
+    assert active["reporter"] == "original-reporter"
+
+
+def test_blocklist_submission_creates_audit_log():
+    response = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": f"audit-{uuid.uuid4().hex}.near",
+            "reason": "Suspicious activity reported",
+            "evidence_url": None,
+            "reporter": "audit-reporter",
+        },
+    )
+
+    assert response.status_code == 202
+    report_id = response.json()["report_id"]
+
+    logs = storage.get_audit_logs(report_id)
+    assert len(logs) == 1
+    assert logs[0]["event_type"] == "BLOCKLIST_REPORT_SUBMITTED"
+    assert logs[0]["actor"] == "audit-reporter"
+
+
+def test_blocklist_review_creates_audit_log():
+    response = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": f"audit-review-{uuid.uuid4().hex}.near",
+            "reason": "Suspicious activity reported",
+            "evidence_url": None,
+            "reporter": "audit-reporter",
+        },
+    )
+
+    report_id = response.json()["report_id"]
+
+    reviewed = client.post(
+        f"/v1/blocklist/reports/{report_id}/review",
+        json={"approved": True, "reviewer": "audit-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+
+    assert reviewed.status_code == 200
+
+    logs = storage.get_audit_logs(report_id)
+    assert len(logs) == 2
+    assert logs[1]["event_type"] == "BLOCKLIST_REPORT_REVIEWED"
+    assert logs[1]["actor"] == "audit-reviewer"
+
+
+def test_blocklist_review_rolls_back_when_audit_log_fails(monkeypatch):
+    receiver = f"rollback-{uuid.uuid4().hex}.near"
+
+    report_id = storage.submit_blocklist_report(
+        receiver,
+        "Suspicious activity reported",
+        None,
+        "rollback-reporter",
+    )
+
+    def fail_audit_log(*args, **kwargs):
+        raise RuntimeError("Simulated audit log failure")
+
+    monkeypatch.setattr(storage, "add_audit_log", fail_audit_log)
+
+    with pytest.raises(RuntimeError, match="Simulated audit log failure"):
+        storage.review_blocklist_report(
+            report_id,
+            True,
+            "rollback-reviewer",
+        )
+
+    with storage.connect() as db:
+        report = db.execute(
+            "SELECT status FROM blocklist_reports WHERE report_id = ?",
+            (report_id,),
+        ).fetchone()
+
+    assert report["status"] == "PENDING"
+    assert receiver not in storage.get_blocklist()
+
+
+def test_reviewer_key_cannot_submit_blocklist_report():
+    response = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "reviewer-submit.near",
+            "reason": "Suspicious activity reported",
+            "reporter": "reviewer-test",
+        },
+        headers={
+            "Authorization": "Bearer test-only-reviewer-key"
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid or missing API key"
+    assert "reviewer-submit.near" not in storage.get_blocklist()
+
+
+def test_missing_reviewer_key_cannot_review_blocklist_report():
+    submitted = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "missing-reviewer.near",
+            "reason": "Suspicious activity reported",
+            "reporter": "test-agent",
+        },
+    )
+    report_id = submitted.json()["report_id"]
+
+    reviewed = client.post(
+        f"/v1/blocklist/reports/{report_id}/review",
+        json={"approved": True, "reviewer": "unauthorized"},
+        headers={"Authorization": ""},
+    )
+
+    assert reviewed.status_code == 401
+    assert "missing-reviewer.near" not in storage.get_blocklist()
+
+
+def test_blocklist_rejects_invalid_evidence_url():
+    response = client.post(
+        "/v1/blocklist",
+        json={
+            "receiver": "invalid-url.near",
+            "reason": "Suspicious transaction activity",
+            "evidence_url": "not-a-valid-url",
+            "reporter": "test-agent",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["reason", "reporter"])
+def test_blocklist_rejects_whitespace_only_text(field):
+    payload = {
+        "receiver": "whitespace-test.near",
+        "reason": "Suspicious transaction activity",
+        "reporter": "test-agent",
+    }
+    payload[field] = "     "
+
+    response = client.post("/v1/blocklist", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_short_account_name_adds_20_risk_points():
+    result = assess("ab.near", "1").json()
+
+    assert result["decision"] == "WARN"
+    assert result["risk_score"] == 20
+    assert any(
+        item.get("signal") == "short_account_name"
+        for item in result["evidence"]
+    )
+
+
+def test_high_amount_adds_30_risk_points():
+    result = assess("safe-account.near", "12").json()
+
+    assert result["decision"] == "WARN"
+    assert result["risk_score"] == 30
+    assert any(
+        item.get("signal") == "high_demo_amount"
+        for item in result["evidence"]
+    )
+
+
+def test_unapproved_action_adds_40_risk_points():
+    result = assess(
+        "safe-account.near", "1", "delete_account"
+    ).json()
+
+    assert result["decision"] == "WARN"
+    assert result["risk_score"] == 40
+    assert any(
+        item.get("signal") == "unrecognized_action"
+        for item in result["evidence"]
+    )
+
+
+def test_blocklist_review_rejects_whitespace_reviewer():
+    with pytest.raises(ValueError):
+        BlocklistReviewRequest(
+            approved=True,
+            reviewer="   ",
+        )
+
+
+def test_blocklist_review_rejects_whitespace_note():
+    with pytest.raises(ValueError):
+        BlocklistReviewRequest(
+            approved=True,
+            reviewer="human-reviewer",
+            note="   ",
+        )
+
+
+def test_blocklist_review_allows_missing_note():
+    request = BlocklistReviewRequest(
+        approved=True,
+        reviewer="  human-reviewer  ",
+    )
+
+    assert request.reviewer == "human-reviewer"
+    assert request.note is None
+
+
+def test_wrapper_blocks_transaction_tampering_after_allow():
+    result = assess("safe-account.near", "1").json()
+    saved = storage.get_decision(result["transaction_id"])
+    transaction = json.loads(saved["payload"])
+    transaction["amount"] = "99"
+
+    called = []
+    wrapper = AgentShieldWrapper(lambda tx: called.append(tx))
+
+    with pytest.raises(SecurityBlocked, match="differs from the assessed payload"):
+        wrapper.execute(result, transaction)
+
+    assert called == []
+
+
+def test_near_execute_rejects_gas_above_fixed_limit(monkeypatch):
+    import app.main as main_module
+
+    monkeypatch.setenv("NEAR_ALLOWED_CONTRACT_ID", "vault.testnet")
+    monkeypatch.setenv("NEAR_SIGNER_ACCOUNT_ID", "agent.testnet")
+    monkeypatch.setenv("NEAR_SIGNER_PUBLIC_KEY", "ed25519:1234567890abcdef")
+    monkeypatch.setenv("NEAR_ALLOWED_METHODS", "deposit")
+
+    called = []
+    async def fake_view_access_key(*args):
+        called.append("key_check")
+        return {"permission": {"FunctionCall": {
+            "receiver_id": "vault.testnet",
+            "method_names": ["deposit"],
+            "allowance": "1000",
+        }}}
+
+    async def fake_submit(**kwargs):
+        called.append("signer")
+        return {"submitted": True, "transaction_hash": "mock-hash"}
+
+    monkeypatch.setattr(main_module, "view_access_key", fake_view_access_key)
+    monkeypatch.setattr(main_module, "submit_function_call", fake_submit)
+
+    assessment = client.post("/v1/assess", json={
+        "agent_id": "test-agent",
+        "receiver": "vault.testnet",
+        "amount": "0",
+        "asset": "NEAR",
+        "action": "function_call",
+        "function_method": "deposit",
+        "function_args": {"account_id": "alice.testnet"},
+    }).json()
+
+    response = client.post("/v1/near/execute-function-call", json={
+        "transaction_id": assessment["transaction_id"],
+        "account_id": "agent.testnet",
+        "public_key": "ed25519:1234567890abcdef",
+        "contract_id": "vault.testnet",
+        "method_name": "deposit",
+        "args": {"account_id": "alice.testnet"},
+        "gas": 300_000_000_000_000,
+    })
+
+    assert response.status_code == 403
+    assert called == []
+
+
+def test_near_account_reports_configured_network(monkeypatch):
+    import app.main as main_module
+
+    async def fake_account_exists(account_id):
+        return True
+
+    monkeypatch.setattr(main_module, "account_exists", fake_account_exists)
+    monkeypatch.setattr(main_module, "NETWORK", "mainnet")
+
+    response = client.get("/v1/near/account/agent.testnet")
+
+    assert response.status_code == 200
+    assert response.json()["network"] == "mainnet"
+    assert response.json()["exists"] is True
+
+
+def test_approval_request_rejects_whitespace_reviewer():
+    from pydantic import ValidationError
+    from app.models import ApprovalRequest
+
+    with pytest.raises(ValidationError):
+        ApprovalRequest(approved=True, reviewer="   ")
+
+
+def test_approval_request_rejects_whitespace_note():
+    from pydantic import ValidationError
+    from app.models import ApprovalRequest
+
+    with pytest.raises(ValidationError):
+        ApprovalRequest(approved=True, reviewer="security-reviewer", note="   ")

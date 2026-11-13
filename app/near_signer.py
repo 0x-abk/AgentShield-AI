@@ -20,6 +20,10 @@ class SignerUnavailable(RuntimeError):
 
 
 def _transaction_hash(result: Any) -> str | None:
+    if isinstance(result, str):
+        value = result.strip()
+        return value or None
+
     transaction = getattr(result, "transaction", None)
     value = getattr(transaction, "hash", None)
     if value:
@@ -58,8 +62,8 @@ async def submit_function_call(*, account_id: str, contract_id: str,
             raise SignerUnavailable("Install the NEAR SDK with: pip install py-near==1.2.22") from exc
 
     rpc_url = os.getenv("NEAR_RPC_URL", "https://rpc.testnet.near.org").strip()
-    if not rpc_url.startswith("https://"):
-        raise SignerNotConfigured("NEAR_RPC_URL must use HTTPS")
+    if rpc_url != "https://rpc.testnet.near.org":
+        raise SignerNotConfigured("Testnet signer only permits the official NEAR Testnet RPC endpoint")
     account = Account(configured_account, private_key, rpc_addr=rpc_url)
     try:
         await account.startup()
@@ -74,6 +78,16 @@ async def submit_function_call(*, account_id: str, contract_id: str,
     except Exception as exc:
         # Do not include key material or raw exception context in API responses.
         raise SignerUnavailable(f"NEAR Testnet transaction failed: {type(exc).__name__}") from exc
+    finally:
+        try:
+            await account.shutdown()
+        except Exception as cleanup_exc:
+            # Do not hide the transaction result or original error.
+            import logging
+            logging.getLogger(__name__).warning(
+                "NEAR signer cleanup failed: %s",
+                type(cleanup_exc).__name__,
+            )
 
     return {
         "submitted": True,

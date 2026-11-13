@@ -131,15 +131,15 @@ pytest -q
 
 ## NEAR integration status and limitations
 
-The Python implementation includes read-only NEAR Testnet JSON-RPC queries, a FunctionCall signer adapter, and an API execution path with fail-closed security checks. However, the py-near SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting are not currently available or verified in this environment.
+The Python implementation includes read-only NEAR Testnet JSON-RPC queries, a FunctionCall signer adapter, and an API execution path with fail-closed security checks. The py-near==1.2.22 SDK is pinned in requirements.txt and installed in the Debian PRoot development virtual environment. It is not installed in native Termux. Live NEAR Testnet signing and transaction broadcasting have not yet been verified.
 
-Before enabling live NEAR Testnet execution, install and validate the supported NEAR SDK in a compatible environment, independently audit the signer adapter, and configure a Function-Call Access Key restricted to one contract and the minimum required method names. Keep the key outside this API process where possible. Never use a Full-Access key for the agent.
+Before enabling live NEAR Testnet execution, independently validate the signer adapter and configure a Function-Call Access Key restricted to one contract and the minimum required method names. Keep the key outside this API process where possible. Never use a Full-Access key for the agent.
 
 A Function-Call Access Key is not a universal spending-limit mechanism: it is restricted to a receiver contract and optionally method names, and it cannot attach NEAR tokens to the call. If an account has only Function-Call keys, it cannot transfer NEAR or manage keys through ordinary transactions; exhausting a finite gas allowance can make the key unusable. A contract method may still have application-specific behavior, so validate the contract itself and do not claim the key blocks every economic effect.
 
 ## Data sources and evidence
 
-- Shared blocklist: user/community reports stored in SQLite with reporter, reason and optional evidence URL. Reports are unverified until a moderation process is added.
+- Moderated blocklist: user/community reports are stored in SQLite with reporter, reason, optional evidence URL and audit history. Reports remain PENDING until a Human Reviewer approves or rejects them. Only APPROVED reports enter the active blocklist.
 - Account existence: NEAR Testnet JSON-RPC `query/view_account` (optional endpoint). Existence is not a trust score.
 - Account age, historical activity, contract code hash/change history and prior agent interactions: **not yet implemented**. Add an indexed chain data source and cache verified observations before using these signals for decisions.
 - The short-name and amount thresholds are transparent demo heuristics, not claims of real-world fraud detection.
@@ -151,7 +151,6 @@ A Function-Call Access Key is not a universal spending-limit mechanism: it is re
 - SQLite audit-log triggers reject UPDATE and DELETE through the application database connection. Direct database-file modification or trigger removal is not prevented; logs are not remotely replicated.
 - Consider request signing and independently protected remote audit-log storage for higher-assurance deployments.
 - The NEAR FunctionCall replay guard uses SQLite and provides single-instance protection. Distributed idempotency and transaction reconciliation are still needed for production.
-- Moderate blocklist reports and preserve provenance.
 - Add explicit policy versioning and distributed idempotency/reconciliation.
 - Add verified chain-derived account and contract evidence before using those signals in risk decisions.
 - Have an independent reviewer audit the signer boundary and NEAR contract permissions.
@@ -183,7 +182,7 @@ curl -X POST http://127.0.0.1:8000/v1/near/validate-function-call \
   -d '{"account_id":"agent.testnet","public_key":"ed25519:YOUR_PUBLIC_KEY", "requested_contract":"your-contract.testnet", "method_name":"deposit", "attached_deposit_yocto":"0", "action_count":1}'
 ```
 
-This check verifies the key's current on-chain permission. It does **not** sign or broadcast a transaction. The next integration step is to connect a separately secured signer that can only use the dedicated FunctionCall key, then make the signer call the AgentShield gate immediately before signing. Never load a FullAccess key into the AI agent process.
+This read-only validation endpoint checks the key's current on-chain permission; it does not itself sign or broadcast. The separate execute-function-call endpoint applies AgentShield policy checks before invoking the restricted signer. Never load a FullAccess key into the AI agent process.
 
 ### NEAR FunctionCall key limitations
 
@@ -206,15 +205,9 @@ This build adds `POST /v1/near/execute-function-call`. It is deliberately narrow
 
 ### Install signer SDK
 
-The signer adapter targets `py-near==1.2.22` (package import: `py_near`).
-This SDK is not included in the current `requirements.txt` and could not be
-installed in the current Android Termux environment because of build
-compatibility issues.
+The signer adapter targets `py-near==1.2.22` (package import: `py_near`). This dependency is pinned in `requirements.txt` and installed in the Debian PRoot development environment. It is not installed in native Termux because of Android build compatibility issues.
 
-Live signing has therefore not been verified in this environment. SDK
-installation and signer integration must first be validated in a compatible
-Linux environment before attempting Testnet transactions. Installing the
-project requirements alone does not enable live signing.
+Live NEAR Testnet signing and transaction broadcasting have not yet been verified. The signer adapter still requires independent validation with a properly restricted Testnet FunctionCall key before live transactions are attempted.
 
 ### Configure Testnet signer
 
@@ -302,8 +295,8 @@ The replay tests use mocked RPC/signer responses. They validate duplicate-submis
 
 The NEAR FunctionCall signer adapter and API execution path are implemented in the codebase, with fail-closed policy checks and mocked security tests.
 
-However, the `py-near` SDK is not installed in the current Termux environment because of Android build compatibility issues. Therefore, live NEAR Testnet signing and transaction broadcasting have not been verified and are not currently available in this environment.
+The `py-near==1.2.22` SDK is installed in the Debian PRoot development virtual environment, but not in native Termux. Live NEAR Testnet signing and transaction broadcasting have not been verified.
 
-The 46 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
+The 95 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
 
 Do not configure real funds or use this prototype on Mainnet. Live Testnet integration remains a future validation step.

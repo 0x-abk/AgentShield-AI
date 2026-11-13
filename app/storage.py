@@ -28,6 +28,20 @@ def init_db():
           receiver TEXT PRIMARY KEY, reason TEXT NOT NULL, evidence_url TEXT,
           reporter TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS blocklist_reports (
+          report_id TEXT PRIMARY KEY,
+          receiver TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          evidence_url TEXT,
+          reporter TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('PENDING','APPROVED','REJECTED')),
+          reviewer TEXT,
+          review_note TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          reviewed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_blocklist_reports_receiver
+        ON blocklist_reports(receiver);
         CREATE TABLE IF NOT EXISTS approvals (
           transaction_id TEXT PRIMARY KEY, approved INTEGER NOT NULL,
           reviewer TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -76,10 +90,101 @@ def get_blocklist():
     with connect() as db:
         return {row['receiver']: dict(row) for row in db.execute("SELECT * FROM blocklist")}
 
-def report_block(receiver: str, reason: str, evidence_url: str | None, reporter: str):
+def submit_blocklist_report(
+    receiver: str,
+    reason: str,
+    evidence_url: str | None,
+    reporter: str,
+) -> str:
+    report_id = str(uuid.uuid4())
+    receiver = receiver.strip().lower()
+
     with connect() as db:
-        db.execute("INSERT INTO blocklist(receiver,reason,evidence_url,reporter) VALUES(?,?,?,?) ON CONFLICT(receiver) DO UPDATE SET reason=excluded.reason,evidence_url=excluded.evidence_url,reporter=excluded.reporter",
-                   (receiver.lower(),reason,evidence_url,reporter))
+        db.execute(
+            """
+            INSERT INTO blocklist_reports
+            (report_id, receiver, reason, evidence_url, reporter, status)
+            VALUES (?, ?, ?, ?, ?, 'PENDING')
+            """,
+            (report_id, receiver, reason, evidence_url, reporter),
+        )
+        add_audit_log(
+            report_id,
+            "BLOCKLIST_REPORT_SUBMITTED",
+            reporter,
+            {"receiver": receiver},
+            db=db,
+        )
+
+    return report_id
+
+
+def review_blocklist_report(
+    report_id: str,
+    approved: bool,
+    reviewer: str,
+    note: str | None = None,
+):
+    with connect() as db:
+        report = db.execute(
+            "SELECT * FROM blocklist_reports WHERE report_id = ?",
+            (report_id,),
+        ).fetchone()
+
+        if not report:
+            return None
+
+        if report["status"] != "PENDING":
+            return False
+
+        status = "APPROVED" if approved else "REJECTED"
+
+        cursor = db.execute(
+            """
+            UPDATE blocklist_reports
+            SET status = ?, reviewer = ?, review_note = ?,
+                reviewed_at = CURRENT_TIMESTAMP
+            WHERE report_id = ? AND status = 'PENDING'
+            """,
+            (status, reviewer, note, report_id),
+        )
+
+        if cursor.rowcount != 1:
+            return False
+
+        if approved:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO blocklist
+                (receiver, reason, evidence_url, reporter)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    report["receiver"],
+                    report["reason"],
+                    report["evidence_url"],
+                    report["reporter"],
+                ),
+            )
+
+        add_audit_log(
+            report_id,
+            "BLOCKLIST_REPORT_REVIEWED",
+            reviewer,
+            {
+                "receiver": report["receiver"],
+                "approved": approved,
+                "note": note,
+            },
+            db=db,
+        )
+
+        result = db.execute(
+            "SELECT * FROM blocklist_reports WHERE report_id = ?",
+            (report_id,),
+        ).fetchone()
+
+        return dict(result)
 
 def get_decision(txid: str):
     with connect() as db:
@@ -143,11 +248,13 @@ def finish_execution(txid: str, *, status: str, tx_hash: str | None = None,
     if status not in {"SUBMITTED", "FAILED"}:
         raise ValueError("Invalid terminal execution status")
     with connect() as db:
-        db.execute(
+        cursor = db.execute(
             """UPDATE executions SET status=?, tx_hash=?, error=?,
                updated_at=CURRENT_TIMESTAMP WHERE transaction_id=? AND status='SUBMITTING'""",
             (status, tx_hash, error, txid),
         )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Execution not found or is no longer SUBMITTING")
 
 
 def get_execution(txid: str):
