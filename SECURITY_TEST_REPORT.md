@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-The automated test suite contains 95 passing tests covering:
+The automated test suite contains 98 passing tests covering:
 
 - ALLOW, WARN, and BLOCK risk decisions.
 - Blocklist enforcement and invalid transaction amounts.
@@ -53,7 +53,7 @@ The py-near==1.2.22 dependency is installed and pinned in requirements.txt. Live
 
 ## 6. Test results
 
-- Latest full test run: 95 passed.
+- Latest full test run: 98 passed.
 - A Starlette TestClient / AnyIO deprecation warning was reported.
 - No claim of live blockchain transaction execution is made.
 

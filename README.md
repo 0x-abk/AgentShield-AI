@@ -297,6 +297,6 @@ The NEAR FunctionCall signer adapter and API execution path are implemented in t
 
 The `py-near==1.2.22` SDK is installed in the Debian PRoot development virtual environment, but not in native Termux. Live NEAR Testnet signing and transaction broadcasting have not been verified.
 
-The 95 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
+The 98 passing tests validate the tested security logic using mocked signer/RPC behavior. They do not prove that a real transaction was signed or broadcast.
 
 Do not configure real funds or use this prototype on Mainnet. Live Testnet integration remains a future validation step.

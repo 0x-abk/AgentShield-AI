@@ -53,7 +53,7 @@ BLOCK decisions never reach the signer. WARN decisions require human approval. T
 ## Testing
 
 Latest full automated test run:
-- 95 passed
+- 98 passed
 - 1 Starlette / AnyIO deprecation warning
 
 Tests use local mocks and test doubles for NEAR RPC and signer operations.
