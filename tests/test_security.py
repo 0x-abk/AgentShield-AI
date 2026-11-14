@@ -1093,3 +1093,64 @@ def test_approval_request_rejects_whitespace_note():
 
     with pytest.raises(ValidationError):
         ApprovalRequest(approved=True, reviewer="security-reviewer", note="   ")
+
+
+
+def test_approved_blocklist_report_blocks_next_assessment():
+    receiver = f"verified-scam-{uuid.uuid4().hex}.near"
+
+    submitted = client.post("/v1/blocklist", json={
+        "receiver": receiver,
+        "reason": "Test evidence for suspicious receiver activity",
+        "reporter": "security-test",
+    })
+    assert submitted.status_code == 202
+    report_id = submitted.json()["report_id"]
+
+    pending = client.get(
+        "/v1/blocklist/reports/pending",
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+    assert pending.status_code == 200
+    assert any(r["report_id"] == report_id for r in pending.json())
+
+    reviewed = client.post(
+        f"/v1/blocklist/reports/{report_id}/review",
+        json={"approved": True, "reviewer": "security-reviewer"},
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "APPROVED"
+
+    assessment = client.post("/v1/assess", json={
+        "agent_id": "test-agent",
+        "receiver": receiver,
+        "amount": "1",
+        "asset": "NEAR",
+        "action": "transfer",
+    })
+    assert assessment.status_code == 200
+    assert assessment.json()["decision"] == "BLOCK"
+
+def test_agent_key_cannot_view_pending_blocklist_reports():
+    response = client.get("/v1/blocklist/reports/pending")
+    assert response.status_code == 401
+
+
+def test_reviewer_key_can_view_pending_blocklist_reports():
+    submitted = client.post("/v1/blocklist", json={
+        "receiver": "scammer.near",
+        "reason": "Demo security test report",
+        "reporter": "test-reviewer",
+    })
+    assert submitted.status_code == 202
+
+    response = client.get(
+        "/v1/blocklist/reports/pending",
+        headers={"Authorization": "Bearer test-only-reviewer-key"},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["receiver"] == "scammer.near"
+    assert response.json()[0]["status"] == "PENDING"

@@ -90,6 +90,19 @@ def get_blocklist():
     with connect() as db:
         return {row['receiver']: dict(row) for row in db.execute("SELECT * FROM blocklist")}
 
+def get_pending_blocklist_reports(limit: int = 100):
+    limit = max(1, min(int(limit), 200))
+    with connect() as db:
+        rows = db.execute(
+            """SELECT * FROM blocklist_reports
+               WHERE status = 'PENDING'
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def submit_blocklist_report(
     receiver: str,
     reason: str,

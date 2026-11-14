@@ -144,6 +144,11 @@ def add_blocklist(report: BlocklistReport):
     }
 
 
+@app.get("/v1/blocklist/reports/pending")
+def get_pending_blocklist_reports():
+    return storage.get_pending_blocklist_reports()
+
+
 @app.post("/v1/blocklist/reports/{report_id}/review")
 def review_blocklist_report(report_id: str, request: BlocklistReviewRequest):
     result = storage.review_blocklist_report(

@@ -18,7 +18,7 @@
 <section class="cards"><div class="card"><span>Total assessments</span><div class="metric" id="total">—</div></div><div class="card"><span>Allowed</span><div class="metric" style="color:var(--green)" id="allowed">—</div></div><div class="card"><span>Needs review</span><div class="metric" style="color:var(--yellow)" id="warned">—</div></div><div class="card"><span>Blocked</span><div class="metric" style="color:var(--red)" id="blocked">—</div></div></section>
 <div class="layout"><div><section class="panel"><h2>Assess a transaction</h2><p class="hint">The deterministic policy engine makes the security decision. The LLM is not trusted to approve transactions.</p><form id="assessForm"><div class="two"><div><label>Agent ID</label><input name="agent_id" value="agent-001" required></div><div><label>Action</label><select name="action"><option value="transfer">Transfer</option><option value="function_call">Function Call</option></select></div></div><label>Receiver account / contract</label><input name="receiver" placeholder="example.near" required><div class="two"><div><label>Amount</label><input name="amount" value="1" required></div><div><label>Asset</label><select name="asset"><option>NEAR</option><option>USDC</option><option>OTHER</option></select></div></div><label>Function method (optional)</label><input name="function_method" placeholder="e.g. deposit"><label>Function arguments JSON (optional)</label><textarea name="function_args" rows="2">{}</textarea><button class="primary" type="submit">Run security assessment →</button></form><div id="assessment" class="result"></div></section>
 <section class="panel"><h2>NEAR account inspection</h2><p class="hint">Read-only Testnet lookup. Account existence is not proof of trustworthiness.</p><label>NEAR account ID</label><input id="nearAccount" placeholder="account.testnet"><div class="actions"><button class="secondary" id="checkAccount">Check account</button><button class="secondary" id="checkKeys">List access keys</button></div><div id="nearResult" class="result"></div></section></div>
-<div><section class="panel"><h2>Human approval queue</h2><p class="hint">WARN transactions must be reviewed before execution.</p><div id="approvalQueue" class="empty">No pending reviews.</div></section><section class="panel"><h2>Report a risky receiver</h2><p class="hint">Submit evidence-backed reports. A report affects future assessments.</p><form id="blockForm"><label>Receiver</label><input name="receiver" placeholder="suspicious.near" required><label>Reason</label><textarea name="reason" rows="2" minlength="5" required></textarea><label>Evidence URL (optional)</label><input name="evidence_url" type="url" placeholder="https://..."><label>Reporter</label><input name="reporter" value="dashboard-user" required><button class="primary" type="submit">Submit blocklist report</button></form></section></div></div>
+<div><section class="panel"><h2>Human approval queue</h2><p class="hint">WARN transactions must be reviewed before execution.</p><div id="approvalQueue" class="empty">No pending reviews.</div></section><section class="panel"><h2>Blocklist Report Review</h2><p class="hint">Review evidence-backed reports before adding receivers to the shared blocklist.</p><div id="blocklistQueue" class="empty">Enter Reviewer API Key to view pending reports.</div></section><section class="panel"><h2>Report a risky receiver</h2><p class="hint">Submit evidence-backed reports. A report affects future assessments.</p><form id="blockForm"><label>Receiver</label><input name="receiver" placeholder="suspicious.near" required><label>Reason</label><textarea name="reason" rows="2" minlength="5" required></textarea><label>Evidence URL (optional)</label><input name="evidence_url" type="url" placeholder="https://..."><label>Reporter</label><input name="reporter" value="dashboard-user" required><button class="primary" type="submit">Submit blocklist report</button></form></section></div></div>
 <section class="panel"><h2>Security history</h2><p class="hint">Latest risk decisions recorded by AgentShield.</p><div style="overflow-x:auto"><table><thead><tr><th>Decision</th><th>Receiver</th><th>Agent</th><th>Risk</th><th>Time</th></tr></thead><tbody id="history"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody></table></div></section><div class="foot">AgentShield AI · Prototype dashboard · Decisions are policy-based, not a guarantee of safety.</div></main><div id="toast"></div>
 <script>
 let apiKey='';
@@ -60,9 +60,86 @@ $('#approvalQueue').addEventListener('click',e=>{
  review(button.dataset.transactionId,button.dataset.approved==='true');
 });
 $('#assessForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);let args;try{args=JSON.parse(f.get('function_args')||'{}')}catch{toast('Function arguments must be valid JSON.');return}const body={agent_id:f.get('agent_id'),receiver:f.get('receiver'),amount:f.get('amount'),asset:f.get('asset'),action:f.get('action'),function_method:f.get('function_method')||null,function_args:args};try{const d=await api('/v1/assess',{method:'POST',body:JSON.stringify(body)});const decision=['ALLOW','WARN','BLOCK'].includes(d.decision)?d.decision:'UNKNOWN';const level=['LOW','MEDIUM','HIGH'].includes(d.risk_level)?d.risk_level:'UNKNOWN';const score=Number.isInteger(d.risk_score)&&d.risk_score>=0&&d.risk_score<=100?d.risk_score:'N/A';const box=$('#assessment');box.className='result show';box.innerHTML=`<div class="decision ${decision}">${decision} · ${level} RISK</div><div>Risk score: <b>${score}/100</b></div><div class="reason">${Array.isArray(d.reasons)?d.reasons.map(esc).join('<br>'):'No reasons provided.'}</div><div class="mono">ID: ${esc(d.transaction_id)}</div>${d.requires_human_approval?'<p style="color:var(--yellow)">Human approval is required before signing.</p>':''}`;toast('Assessment completed: '+d.decision);refresh()}catch(err){toast(err.message)}});
-$('#blockForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{await api('/v1/blocklist',{method:'POST',body:JSON.stringify(Object.fromEntries(f))});toast('Blocklist report submitted.');e.target.reset();refresh()}catch(err){toast(err.message)}});
+$('#blockForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{await api('/v1/blocklist',{method:'POST',body:JSON.stringify({...Object.fromEntries(f),evidence_url:f.get('evidence_url').trim()||null})});toast('Blocklist report submitted.');e.target.reset();refresh();refreshBlocklistReports()}catch(err){toast(err.message)}});
 $('#checkAccount').onclick=async()=>{const id=$('#nearAccount').value.trim();if(!id)return toast('Enter a NEAR account ID.');try{const d=await api(`/v1/near/account/${encodeURIComponent(id)}`);$('#nearResult').className='result show';$('#nearResult').textContent=`${d.account_id}: ${d.exists?'Account exists':'Account not found'} · ${d.network}`}catch(e){toast(e.message)}};
 $('#checkKeys').onclick=async()=>{const id=$('#nearAccount').value.trim();if(!id)return toast('Enter a NEAR account ID.');try{const d=await api(`/v1/near/access-keys/${encodeURIComponent(id)}`);$('#nearResult').className='result show';$('#nearResult').innerHTML=`<b>${esc(d.account_id)}</b><pre class="mono">${esc(JSON.stringify(d.keys,null,2))}</pre>`}catch(e){toast(e.message)}};
+
+
+async function refreshBlocklistReports(){
+  const box=$('#blocklistQueue');
+  const reviewerKey=$('#reviewerApiKeyInput').value.trim();
+
+  if(!apiKey){
+    box.textContent='Connect to AgentShield to view pending reports.';
+    return;
+  }
+  if(!reviewerKey){
+    box.textContent='Enter Reviewer API Key to view pending reports.';
+    return;
+  }
+
+  try{
+    const reports=await api('/v1/blocklist/reports/pending',{
+      headers:{'Authorization':`Bearer ${reviewerKey}`}
+    });
+
+    box.innerHTML=reports.length?reports.map(r=>`
+      <div style="border-bottom:1px solid var(--line);padding:12px 0">
+        <b>${esc(r.receiver)}</b>
+        <div class="sub">Status: ${esc(r.status)} · Reporter: ${esc(r.reporter)}</div>
+        <p>${esc(r.reason)}</p>
+        ${r.evidence_url?`<div class="sub">Evidence: ${esc(r.evidence_url)}</div>`:''}
+        <div class="actions">
+          <button class="primary" data-report-id="${esc(r.report_id)}" data-approved="true">Approve</button>
+          <button class="danger" data-report-id="${esc(r.report_id)}" data-approved="false">Reject</button>
+        </div>
+      </div>
+    `).join(''):'<div class="empty">No pending blocklist reports.</div>';
+  }catch(e){
+    box.textContent='Unable to load reports. Check Reviewer API Key.';
+    toast(e.message);
+  }
+}
+
+async function reviewBlocklistReport(id,approved){
+  const reviewerKey=$('#reviewerApiKeyInput').value.trim();
+  if(!reviewerKey){
+    toast('Enter your Reviewer API Key first.');
+    return;
+  }
+
+  const reviewer=prompt('Reviewer name:');
+  if(!reviewer)return;
+
+  try{
+    await api(`/v1/blocklist/reports/${encodeURIComponent(id)}/review`,{
+      method:'POST',
+      body:JSON.stringify({
+        approved,
+        reviewer,
+        note:'Reviewed from dashboard'
+      }),
+      headers:{'Authorization':`Bearer ${reviewerKey}`}
+    });
+
+    toast(approved?'Blocklist report approved.':'Blocklist report rejected.');
+    await refreshBlocklistReports();
+    await refresh();
+  }catch(e){
+    toast(e.message);
+  }
+}
+
+$('#blocklistQueue').addEventListener('click',e=>{
+  const button=e.target.closest('button[data-report-id][data-approved]');
+  if(!button)return;
+  reviewBlocklistReport(
+    button.dataset.reportId,
+    button.dataset.approved==='true'
+  );
+});
+
+$('#reviewerApiKeyInput').addEventListener('change',refreshBlocklistReports);
 
 $('#connectApi').addEventListener('click',async()=>{
   const candidate=$('#apiKeyInput').value.trim();
@@ -75,6 +152,7 @@ $('#connectApi').addEventListener('click',async()=>{
     $('#apiStatus').style.color='var(--green)';
     toast('Connected to AgentShield.');
     await refresh();
+    await refreshBlocklistReports();
   }catch(e){
     apiKey='';
     $('#apiStatus').textContent='● API key rejected';
@@ -92,6 +170,7 @@ $('#disconnectApi').addEventListener('click',()=>{
   ['total','allowed','warned','blocked'].forEach(id=>$('#'+id).textContent='—');
   $('#history').innerHTML='<tr><td colspan="5" class="empty">Connect to load security history.</td></tr>';
   $('#approvalQueue').textContent='Connect to view pending reviews.';
+    $('#blocklistQueue').textContent='Connect and enter Reviewer API Key to view pending reports.';
   $('#nearResult').className='result';
   $('#nearResult').textContent='';
   $('#assessment').className='result';
